@@ -1,30 +1,6 @@
 """Connect to the Rigol MSO1104Z over LAN and run a basic identity check."""
 
-import pyvisa
-
-SCOPE_IP = "192.168.147.110"
-RESOURCE_CANDIDATES = [
-    f"TCPIP0::{SCOPE_IP}::5555::SOCKET",  # raw SCPI socket (works with pyvisa-py)
-    f"TCPIP0::{SCOPE_IP}::INSTR",         # VXI-11
-]
-
-
-def open_scope():
-    rm = pyvisa.ResourceManager("@py")
-    last_error = None
-    for resource in RESOURCE_CANDIDATES:
-        try:
-            scope = rm.open_resource(resource)
-            scope.timeout = 5000
-            if resource.endswith("SOCKET"):
-                scope.write_termination = "\n"
-                scope.read_termination = "\n"
-            idn = scope.query("*IDN?").strip()
-            return rm, scope, resource, idn
-        except Exception as exc:
-            last_error = exc
-            continue
-    raise RuntimeError(f"Could not open Rigol scope at {SCOPE_IP}: {last_error}")
+from rigol_scope import open_scope
 
 
 def main():
