@@ -40,9 +40,22 @@ class SignalGenerator(ABC):
         frequency_hz: float,
         amplitude_vpp: float,
         offset_v: float = 0.0,
+        phase_deg: float = 0.0,
     ) -> None:
-        """Configure a standard waveform on one output channel."""
+        """Configure a standard waveform on one output channel.
+
+        ``shape`` is a case-insensitive name such as sine, square, ramp,
+        pulse, noise, or dc. Amplitude is peak-to-peak volts.
+        """
+
+    @abstractmethod
+    def set_load(self, channel: int, ohms: float) -> None:
+        """Set the output load assumption in ohms (use ``math.inf`` for High-Z)."""
 
     @abstractmethod
     def output(self, channel: int, enabled: bool) -> None:
         """Enable or disable an output channel."""
+
+    @abstractmethod
+    def query_channel(self, channel: int) -> dict:
+        """Return the current waveform, amplitude, and output state."""

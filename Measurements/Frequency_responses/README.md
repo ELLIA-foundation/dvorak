@@ -6,9 +6,10 @@ Campaign folder for generator-plus-oscilloscope frequency-response work.
 - Put derived figures in `Data/plots/`
 - Put analysis programs in `Analysis_scripts/`
 
-Capture once the generator driver is implemented:
+Capture with the bench generator and scope:
 
 ```powershell
+python tools\test_instruments.py --skip-scope
 python tools\capture_waveform.py --campaign Frequency_responses
 ```
 

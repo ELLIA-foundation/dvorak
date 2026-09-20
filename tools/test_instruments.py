@@ -67,10 +67,16 @@ def main() -> None:
         action="store_true",
         help="Do not probe the generator role",
     )
+    parser.add_argument(
+        "--skip-scope",
+        action="store_true",
+        help="Do not probe the oscilloscope role",
+    )
     args = parser.parse_args()
 
     print(f"lab.json roles: {lab.get('roles', {})}")
-    _check_oscilloscope(args.scope)
+    if not args.skip_scope:
+        _check_oscilloscope(args.scope)
     if not args.skip_generator:
         _check_generator(args.generator)
 

@@ -39,7 +39,7 @@ roles match the hardware on the network.
 ## Usage
 
 ```powershell
-python tools\test_instruments.py --skip-generator
+python tools\test_instruments.py
 python tools\capture_waveform.py --campaign Spark_Gap_Traces
 python tools\plot_waveform.py --campaign Spark_Gap_Traces --no-show
 python Measurements\Spark_Gap_Traces\Analysis_scripts\analyze_spark_gap.py --no-show
@@ -61,7 +61,7 @@ gen.output(1, True)
 capture = scope.capture_channel(1)
 ```
 
-The DG4062 driver is a stub until SCPI is filled in.
+DG4062 control: [instruments/generators/rigol_dg4062/README.md](instruments/generators/rigol_dg4062/README.md).
 
 ## Adding an oscilloscope
 
