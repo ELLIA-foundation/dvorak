@@ -1,31 +1,33 @@
 # Lab measurement repository
 
 Python tooling for lab instruments and measurement campaigns: interchangeable
-oscilloscope and generator drivers, capture/plot CLIs, and campaign analysis
-plus data.
+oscilloscope, generator, and camera drivers, capture/plot CLIs, and campaign
+analysis plus data.
 
 ## Layout
 
 ```
-lib/                  Shared path helpers and waveform NPZ I/O
+lib/                  Shared path helpers, waveform NPZ I/O, video sidecar I/O
 instruments/          Hardware by role, then model
   lab.json            Which model is on the bench, plus IPs
   oscilloscope.py     Oscilloscope ABC
   generator.py        SignalGenerator ABC
-  registry.py         open_oscilloscope() / open_generator()
+  camera.py           Camera ABC
+  registry.py         open_oscilloscope() / open_generator() / open_camera()
   oscilloscopes/      One folder per scope model
   generators/         One folder per generator model
+  cameras/            One folder per camera model
 tools/                Capture, plot, and connection tests (not model-specific)
 Measurements/         One folder per campaign
   <Campaign>/
     Analysis_scripts/
-    Data/             waveform_*.npz + .json
+    Data/             waveform_*.npz + .json, or video_*.mp4 + .json
       plots/          Derived PNG/PDF and analysis_<stem>/
 ```
 
-Campaigns and tools import **roles** (`open_oscilloscope()`, `open_generator()`),
-never a specific model module. Swap the default scope by flipping
-`DEFAULT_OSCILLOSCOPE` in [`instruments/registry.py`](instruments/registry.py)
+Campaigns and tools import **roles** (`open_oscilloscope()`, `open_generator()`,
+`open_camera()`), never a specific model module. Swap the default scope by
+flipping `DEFAULT_OSCILLOSCOPE` in [`instruments/registry.py`](instruments/registry.py)
 (`OscilloscopeId.MSO1104` or `OscilloscopeId.MHO954`), or pass `--scope <model_id>`
 on a CLI. IPs stay in [`instruments/lab.json`](instruments/lab.json).
 
@@ -42,9 +44,10 @@ roles match the hardware on the network.
 
 ```powershell
 python tools\test_instruments.py
+python Measurements\Spark_Gap_Traces\Analysis_scripts\analyze_spark_gap.py --no-show
 python tools\capture_waveform.py --campaign Spark_Gap_Traces
 python tools\plot_waveform.py --campaign Spark_Gap_Traces --no-show
-python Measurements\Spark_Gap_Traces\Analysis_scripts\analyze_spark_gap.py --no-show
+python tools\capture_video.py --campaign Camera_Check --duration 3
 ```
 
 MSO1104 connection quirks: [instruments/oscilloscopes/rigol_mso1104/CHEATSHEET.md](instruments/oscilloscopes/rigol_mso1104/CHEATSHEET.md).
@@ -72,6 +75,13 @@ DG4062 control: [instruments/generators/rigol_dg4062/README.md](instruments/gene
 2. Add an `OscilloscopeId` member and register the class in [`instruments/registry.py`](instruments/registry.py).
 3. Add a `connections.<model_id>.ip` block in `lab.json`. Flip `DEFAULT_OSCILLOSCOPE` (or `roles.oscilloscope`) to make it the default.
 4. Keep model quirks and a CHEATSHEET in that folder. Capture still returns `time_s` / `voltage_v`.
+
+## Adding a camera
+
+1. Create `instruments/cameras/<model_id>/driver.py` implementing `Camera`.
+2. Register the class in [`instruments/registry.py`](instruments/registry.py).
+3. Add a `connections.<model_id>` block in `lab.json` (IP and login). Flip `DEFAULT_CAMERA` (or `roles.camera`) to make it the default.
+4. Recordings return `lib.video.VideoCapture` and save `video_*.mp4` plus JSON under the campaign `Data/` folder.
 
 ## Adding a campaign
 

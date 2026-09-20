@@ -1,5 +1,17 @@
 {
-  "source": "captures\\waveform_20260919_111409_ch1.npz",
+  "source": "C:\\Users\\dilna1\\Projects\\dvo\u0159\u00e1k\\Measurements\\Spark_Gap_Traces\\Data\\waveform_20260919_111409_ch1.npz",
+  "campaign": "Spark_Gap_Traces",
+  "run": {
+    "mode": "offline",
+    "run_name": "offline_smoke",
+    "scope_channel": 1,
+    "scope_bw_hz": 100000000.0,
+    "drop_threshold_v": 5000.0,
+    "drop_window_s": 1e-07,
+    "merge_gap_s": 5e-06,
+    "include_first": false,
+    "capacitance_f": null
+  },
   "metadata": {
     "idn": "RIGOL TECHNOLOGIES,MSO1104Z,DS1ZC170900250,00.04.02.SP4",
     "resource": "TCPIP0::192.168.147.110::inst0::INSTR",

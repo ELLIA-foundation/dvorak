@@ -1,0 +1,31 @@
+# Spark-gap event table. SI units unless noted in SPARK_GAP_METRICS.md.
+# Storage units: s, V, V/s, Hz, J, C, A, H.
+# event_index [1]: 0-based order of detected collapses. Used to plot conditioning.
+# first_cycle [bool]: True when the preceding ramp is much flatter than the later population (startup / long plateau). Kept in the event table; excluded from typical stats.
+# t_break [s]: Collapse-start time: first sample of the steepest ~20 ns drop. Event timestamp for all intervals; not the 1-sample voltage maximum.
+# v_breakdown [V]: Median voltage over the ~20-50 ns plateau immediately before t_break. Repetitive breakdown voltage for that shot.
+# v_undershoot [V]: Minimum in the ~200 ns after t_break. Includes inductive kick / probe ringing.
+# v_residual [V]: Median voltage after ringing settles (~1-5 us post-edge), at the start of the next charging ramp. Recovery / restart voltage for the next cycle.
+# dv_collapse [V]: v_breakdown - v_undershoot. Total observed swing including undershoot.
+# period_s [s]: t_break[i] - t_break[i-1]. Undefined for event 0.
+# rep_rate_hz [Hz]: 1 / period_s for that interval.
+# t_collapse_10_90 [s]: t90 - t10. IEC/scope 10-90% fall time of the discharge edge.
+# slew_collapse_mean [V/s]: 0.8 * (v_pre - v_post) / t_collapse_10_90. Mean collapse gradient; a lower bound set by scope bandwidth.
+# slew_collapse_peak [V/s]: Maximum |dV/dt| over a 5 ns window on the falling edge.
+# t_ring [s]: Dominant post-collapse ring period in the 50-400 ns window (median peak spacing of the residual after a short moving mean).
+# charge_rate [V/s]: Least-squares slope of the linear charging ramp from residual settle to ~100 ns before t_break. I ≈ C * charge_rate if C is known.
+# charge_r2 [1]: Coefficient of determination of the linear ramp fit. Low R² flags a non-linear ramp.
+# v_charge_start [V]: Voltage at the start of the ramp-fit window.
+# v_charge_end [V]: Voltage at the end of the ramp-fit window (near v_breakdown).
+# recovery_s [s]: Time from t_break until a short local slope matches the next-cycle charge rate. Duration of the post-spark transient.
+# energy_j [J]: 0.5 * C * v_breakdown^2. Only when --capacitance is given.
+# charge_c [C]: C * (v_breakdown - v_residual). Only when --capacitance is given.
+# source_current_a [A]: C * charge_rate during the linear ramp. Only when --capacitance is given.
+# L_est_h [H]: 1 / ((2π / t_ring)^2 * C) if t_ring and C are known.
+event_index,first_cycle,t_break,v_breakdown,v_undershoot,v_residual,dv_collapse,period_s,rep_rate_hz,t_collapse_10_90,slew_collapse_mean,slew_collapse_peak,t_ring,charge_rate,charge_r2,v_charge_start,v_charge_end,recovery_s,energy_j,charge_c,source_current_a,L_est_h
+0,True,-0.004550457,5220.0,-1410.0,-390.0,6630.0,,,3.9999999996293e-09,1224000000113.434,1020000000000.0,8.000000000125962e-09,7319856.388277996,0.2704071118154525,885.0,5220.0,,,,,
+1,False,-0.0043455230000000004,5220.0,-1665.0,-390.0,6885.0,0.0002049339999999995,4879.619780026752,4.999999999970306e-09,1060800000006.2999,1173000000000.0,8.000000000125962e-09,26546885.813885696,0.994013364308213,120.0,5220.0,,,,,
+2,False,-0.004125227,5730.0,-1410.0,-645.0,7140.0,0.00022029600000000003,4539.347060318843,9.999999999940612e-09,571200000003.3922,765000000000.0,1.150000000045212e-08,25745415.556653004,0.9941853123999178,375.0,5475.0,,,,,
+3,True,-0.003699097,4965.0,-1665.0,-390.0,6630.0,0.00042613000000000026,2346.701710745546,4.999999999102944e-09,1060800000190.3193,1173000000000.0,8.000000000125962e-09,7086436.268389753,0.31272227333198255,-390.0,5220.0,,,,,
+4,False,-0.003486429,4965.0,-1665.0,-390.0,6630.0,0.00021266800000000006,4702.164876709236,8.000000000125962e-09,662999999989.5609,612000000000.0,9.000000000033287e-09,23621019.460110016,0.9927464351293834,120.0,4965.0,,,,,
+5,False,-0.0032142409999999996,5730.0,-1665.0,-390.0,7395.0,0.00027218800000000046,3673.9312533983802,3.000000000155656e-09,1971999999897.6821,867000000000.0,1.150000000001844e-08,21787252.95626608,0.9944639576256988,120.0,5730.0,,,,,

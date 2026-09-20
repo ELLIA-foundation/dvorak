@@ -85,6 +85,13 @@ def main() -> None:
         action="store_true",
         help="Also write a CSV file (can be large for deep-memory captures)",
     )
+    parser.add_argument(
+        "--window",
+        type=str,
+        default="screen",
+        choices=("screen", "full"),
+        help="RAW slice: 12-div screen (verified) or full memory (default: screen)",
+    )
     args = parser.parse_args()
 
     output_dir = _resolve_output_dir(args.campaign, args.output_dir)
@@ -96,6 +103,7 @@ def main() -> None:
         capture = scope.capture_channel(
             channel=args.channel,
             chunk_size=args.chunk_size,
+            window=args.window,
         )
 
         paths = save_waveform(capture, output_dir, write_csv=args.csv)

@@ -216,9 +216,11 @@ Practical rules for this MSO1104Z:
 - Do **not** use `*OPC?` after `:STOP` — it can hang.
 - `:WAVeform:MODE RAW` only sticks after you also set `:WAVeform:STARt` / `:STOP`.
 - `:WAVeform:PRE?` `points` is the current start/stop **window**, not total memory.
-- Request STOP equal to `SRAT × time/div × 12`. Asking for a much larger STOP can make this firmware clamp to 2.4 Mpts.
+- Request STOP from the largest plausible window (`PRE` xinc, 1 GSa/s, then `:ACQ:SRAT?`). Asking far above the real depth can clamp to 2.4 Mpts — treat that as a failed overshoot and try the next candidate.
 - BYTE format max per read is **250000** points; chunk larger records.
-- RAW preamble `YREFerence` can be invalid (e.g. 305). The guide says YREF is always **127**. If YREF is outside 0–255, use `YINC = CHANnel:SCALe/25` and YREF=127.
+- RAW preamble `YINCrement` / `YREFerence` / `XORigin` are untrustworthy. Always use `YINC = CHANnel:SCALe/25` and YREF=127.
+- Screen window: `t_left/right = OFFSet ± 6 × time/div`. Map that onto deep memory (`:WAVeform:STARt` / `STOP`) assuming trigger-centered or screen-centered records. Default `window="screen"` downloads only that slice.
+- Verification is required: RAW extrema must match `:MEASure` VMIN/VMAX (and NORM correlation if the on-screen download succeeded). Unverified data is refused, not stretched.
 - Voltage: `(byte - YORigin - YREFerence) × YINCrement`
 - Time: `(index - XREFerence) × XINCrement + XORigin`
 
@@ -227,8 +229,7 @@ Default save format is compressed **NPZ** plus a JSON sidecar (`--csv` optional)
 ### Screenshot (PNG over SCPI)
 
 ```python
-scope.write(":DISP:DATA? ON,PNG")
-# Read binary block response; strip IEEE block header
+data, fmt = scope.screenshot()  # this firmware returns BMP even if PNG is requested
 ```
 
 ### LAN configuration via SCPI (alternative to front panel)

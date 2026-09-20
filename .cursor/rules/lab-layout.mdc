@@ -5,18 +5,21 @@ alwaysApply: true
 
 # Lab layout
 
-- Hardware lives under `instruments/` by **role** then **model** (`oscilloscopes/<model_id>/`, `generators/<model_id>/`).
+- Hardware lives under `instruments/` by **role** then **model** (`oscilloscopes/<model_id>/`, `generators/<model_id>/`, `cameras/<model_id>/`).
 - Campaigns live under `Measurements/<Name>/` with `Analysis_scripts/` and `Data/` (`Data/plots/` for derived figures).
-- Capture CLIs and campaign scripts must import `open_oscilloscope()` / `open_generator()` from `instruments`. Do not import `instruments.oscilloscopes.<model>` or `instruments.generators.<model>` from campaign or `tools/` code.
-- Bench IPs and which model fills each role belong in `instruments/lab.json`. Override the scope for one run with `--scope <model_id>`.
+- Capture CLIs and campaign scripts must import `open_oscilloscope()` / `open_generator()` / `open_camera()` from `instruments`. Do not import `instruments.oscilloscopes.<model>`, `instruments.generators.<model>`, or `instruments.cameras.<model>` from campaign or `tools/` code.
+- Bench IPs and which model fills each role belong in `instruments/lab.json`. Override the scope for one run with `--scope <model_id>`. Override the camera with `--camera <model_id>`.
 - A new oscilloscope is a driver implementing `Oscilloscope`, a registry entry, and a `lab.json` connection block. Return `lib.waveform.WaveformCapture` (`time_s`, `voltage_v`); keep vendor fields in `extra`.
-- Raw captures: NPZ + JSON in `Measurements/<campaign>/Data/`. Do not write campaign data next to a driver.
+- A new camera is a driver implementing `Camera`, a registry entry, and a `lab.json` connection block. Return `lib.video.VideoCapture`; keep vendor fields in `extra`.
+- Raw captures: NPZ + JSON (waveforms) or MP4 + JSON (video) in `Measurements/<campaign>/Data/`. Do not write campaign data next to a driver.
 
 ```python
 # BAD
 from instruments.oscilloscopes.rigol_mso1104.driver import RigolMSO1104
+from instruments.cameras.marshall_cv420_30x_ndi.driver import MarshallCV42030XNDI
 
 # GOOD
-from instruments import open_oscilloscope
+from instruments import open_oscilloscope, open_camera
 scope = open_oscilloscope()
+camera = open_camera()
 ```

@@ -1,7 +1,8 @@
 {
   "roles": {
     "oscilloscope": "rigol_mso1104",
-    "generator": "rigol_dg4062"
+    "generator": "rigol_dg4062",
+    "camera": "marshall_cv420_30x_ndi"
   },
   "connections": {
     "rigol_mso1104": {
@@ -12,6 +13,11 @@
     },
     "rigol_dg4062": {
       "ip": "192.168.147.153"
+    },
+    "marshall_cv420_30x_ndi": {
+      "ip": "192.168.147.100",
+      "username": "admin",
+      "password": "9999"
     }
   }
 }

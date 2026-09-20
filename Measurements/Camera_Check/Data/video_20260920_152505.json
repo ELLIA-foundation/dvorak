@@ -1,0 +1,16 @@
+{
+  "idn": "CV420-30X-NDI, 192.168.147.100",
+  "model_id": "marshall_cv420_30x_ndi",
+  "duration_s": 10.09400000000096,
+  "frame_count": 250,
+  "width": 640,
+  "height": 360,
+  "frame_rate_hz": 25.0,
+  "captured_at": "2026-09-20T15:25:23",
+  "video_path": "C:\\Users\\dilna1\\Projects\\dvo\u0159\u00e1k\\Measurements\\Camera_Check\\Data\\video_20260920_152505.mp4",
+  "backend": "ndi",
+  "ndi_source": "CV420-30X-NDI (Default, 192.168.147.100)",
+  "ndi_url": "192.168.147.100:5962",
+  "fourcc": "bgra",
+  "quality": "preview"
+}

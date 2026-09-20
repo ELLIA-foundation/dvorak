@@ -14,7 +14,7 @@ for _parent in Path(__file__).resolve().parents:
 else:
     raise SystemExit("Could not find repository root (expected lib/paths.py and Measurements/).")
 
-from instruments.registry import list_oscilloscopes, load_lab, open_generator, open_oscilloscope
+from instruments.registry import list_cameras, list_oscilloscopes, load_lab, open_camera, open_generator, open_oscilloscope
 
 
 def _check_oscilloscope(model_id: str | None) -> None:
@@ -45,10 +45,20 @@ def _check_generator(model_id: str | None) -> None:
         generator.close()
 
 
+def _check_camera(model_id: str | None) -> None:
+    camera = open_camera(model_id)
+    try:
+        print("Camera")
+        print(f"  model: {camera.model_id}")
+        print(f"  IDN:   {camera.identify()}")
+    finally:
+        camera.close()
+
+
 def main() -> None:
     lab = load_lab()
     parser = argparse.ArgumentParser(
-        description="Query *IDN? on the oscilloscope and generator configured in lab.json."
+        description="Query identity on the oscilloscope, generator, and camera configured in lab.json."
     )
     parser.add_argument(
         "--scope",
@@ -75,6 +85,20 @@ def main() -> None:
         action="store_true",
         help="Do not probe the oscilloscope role",
     )
+    parser.add_argument(
+        "--camera",
+        type=str,
+        default=None,
+        help=(
+            "Camera model id override "
+            f"(registered: {', '.join(list_cameras()) or '(none)'})"
+        ),
+    )
+    parser.add_argument(
+        "--skip-camera",
+        action="store_true",
+        help="Do not probe the camera role",
+    )
     args = parser.parse_args()
 
     print(f"lab.json roles: {lab.get('roles', {})}")
@@ -82,6 +106,8 @@ def main() -> None:
         _check_oscilloscope(args.scope)
     if not args.skip_generator:
         _check_generator(args.generator)
+    if not args.skip_camera:
+        _check_camera(args.camera)
 
 
 if __name__ == "__main__":

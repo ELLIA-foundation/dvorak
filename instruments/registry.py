@@ -7,6 +7,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from instruments.camera import Camera
 from instruments.generator import SignalGenerator
 from instruments.oscilloscope import Oscilloscope
 
@@ -22,6 +23,7 @@ class OscilloscopeId(StrEnum):
 
 # Flip this to change what open_oscilloscope() / CLIs use when --scope is omitted.
 DEFAULT_OSCILLOSCOPE = OscilloscopeId.MSO1104
+DEFAULT_CAMERA = "marshall_cv420_30x_ndi"
 
 
 def load_lab(path: Path | None = None) -> dict[str, Any]:
@@ -71,6 +73,18 @@ def list_generators() -> list[str]:
     return sorted(_generator_classes())
 
 
+def _camera_classes() -> dict[str, type[Camera]]:
+    from instruments.cameras.marshall_cv420_30x_ndi.driver import MarshallCV42030XNDI
+
+    return {
+        "marshall_cv420_30x_ndi": MarshallCV42030XNDI,
+    }
+
+
+def list_cameras() -> list[str]:
+    return sorted(_camera_classes())
+
+
 def open_oscilloscope(model_id: str | OscilloscopeId | None = None) -> Oscilloscope:
     """Construct and connect the oscilloscope for this bench (or ``model_id``).
 
@@ -101,6 +115,28 @@ def open_generator(model_id: str | None = None) -> SignalGenerator:
     if chosen not in classes:
         known = ", ".join(classes) or "(none)"
         raise KeyError(f"Unknown generator {chosen!r}. Registered: {known}")
+    instrument = classes[chosen](connection_for(chosen, config))
+    instrument.connect()
+    return instrument
+
+
+def open_camera(model_id: str | None = None) -> Camera:
+    """Construct and connect the camera for this bench (or ``model_id``).
+
+    Resolution: explicit ``model_id`` / ``--camera`` → ``DEFAULT_CAMERA``
+    → ``lab.json`` ``roles.camera``.
+    """
+    config = load_lab()
+    if model_id:
+        chosen = str(model_id)
+    elif DEFAULT_CAMERA:
+        chosen = str(DEFAULT_CAMERA)
+    else:
+        chosen = _role_model("camera", None, config)
+    classes = _camera_classes()
+    if chosen not in classes:
+        known = ", ".join(classes) or "(none)"
+        raise KeyError(f"Unknown camera {chosen!r}. Registered: {known}")
     instrument = classes[chosen](connection_for(chosen, config))
     instrument.connect()
     return instrument

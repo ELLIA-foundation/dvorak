@@ -1,1 +1,1 @@
-"""Shared lab helpers: repository paths and waveform I/O."""
+"""Shared lab helpers: repository paths, waveform I/O, and video sidecar I/O."""
