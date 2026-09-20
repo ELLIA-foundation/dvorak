@@ -6,18 +6,28 @@ import argparse
 import csv
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
-from plot_waveform import (
-    _decimate_minmax,
-    _latest_capture,
-    _load_metadata,
-    _pick_time_scale,
-    _pick_voltage_scale,
+for _parent in Path(__file__).resolve().parents:
+    if (_parent / "lib" / "paths.py").is_file() and (_parent / "Measurements").is_dir():
+        if str(_parent) not in sys.path:
+            sys.path.insert(0, str(_parent))
+        break
+else:
+    raise SystemExit("Could not find repository root (expected lib/paths.py and Measurements/).")
+
+from lib.paths import CAMPAIGN_SPARK_GAP, campaign_data, campaign_plots, infer_campaign
+from lib.waveform import (
+    decimate_minmax,
+    latest_capture,
+    load_metadata,
+    pick_time_scale,
+    pick_voltage_scale,
 )
 from spark_gap import (
     CSV_COLUMNS,
@@ -106,9 +116,9 @@ def _apply_layout(fig) -> None:
 
 
 def plot_overview(result: AnalysisResult, include_first: bool) -> plt.Figure:
-    plot_t, plot_v = _decimate_minmax(result.time_s, result.voltage_v, DEFAULT_MAX_POINTS)
-    display_t, time_unit = _pick_time_scale(plot_t)
-    display_v, volt_unit = _pick_voltage_scale(plot_v)
+    plot_t, plot_v = decimate_minmax(result.time_s, result.voltage_v, DEFAULT_MAX_POINTS)
+    display_t, time_unit = pick_time_scale(plot_t)
+    display_v, volt_unit = pick_voltage_scale(plot_v)
     if time_unit == "ms":
         t_scale = 1e3
     elif time_unit == "µs":
@@ -501,7 +511,7 @@ def run_analysis(
     data = np.load(npz_path)
     time_s = np.asarray(data["time_s"], dtype=np.float64)
     voltage_v = np.asarray(data["voltage_v"], dtype=np.float64)
-    metadata = _load_metadata(npz_path) or {}
+    metadata = load_metadata(npz_path) or {}
     result = analyze_waveform(
         time_s,
         voltage_v,
@@ -523,24 +533,23 @@ def run_analysis(
 
 
 def main() -> None:
-    captures_dir = HERE / "captures"
-    default_npz = _latest_capture(captures_dir)
+    default_npz = latest_capture(campaign_data(CAMPAIGN_SPARK_GAP))
 
     parser = argparse.ArgumentParser(
-        description="Detect spark-gap breakdowns in a Rigol NPZ capture and write diagnostics."
+        description="Detect spark-gap breakdowns in a captured NPZ waveform and write diagnostics."
     )
     parser.add_argument(
         "npz",
         nargs="?",
         type=Path,
         default=default_npz,
-        help="Path to .npz file from capture_waveform.py (default: latest in captures/)",
+        help="Path to .npz file from tools/capture_waveform.py (default: latest in this campaign Data/)",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
         default=None,
-        help="Output directory (default: captures/analysis_<stem>/)",
+        help="Output directory (default: Measurements/<campaign>/Data/plots/analysis_<stem>/)",
     )
     parser.add_argument(
         "--no-show",
@@ -589,7 +598,8 @@ def main() -> None:
 
     out_dir = args.out_dir
     if out_dir is None:
-        out_dir = args.npz.parent / f"analysis_{args.npz.stem}"
+        campaign = infer_campaign(args.npz) or CAMPAIGN_SPARK_GAP
+        out_dir = campaign_plots(campaign) / f"analysis_{args.npz.stem}"
 
     result = run_analysis(
         args.npz,

@@ -1,0 +1,14 @@
+{
+  "roles": {
+    "oscilloscope": "rigol_mso1104",
+    "generator": "rigol_dg4062"
+  },
+  "connections": {
+    "rigol_mso1104": {
+      "ip": "192.168.147.110"
+    },
+    "rigol_dg4062": {
+      "ip": "192.168.147.111"
+    }
+  }
+}

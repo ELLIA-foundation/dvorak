@@ -1,0 +1,22 @@
+---
+description: Lab repo layout — instrument roles vs campaigns
+alwaysApply: true
+---
+
+# Lab layout
+
+- Hardware lives under `instruments/` by **role** then **model** (`oscilloscopes/<model_id>/`, `generators/<model_id>/`).
+- Campaigns live under `Measurements/<Name>/` with `Analysis_scripts/` and `Data/` (`Data/plots/` for derived figures).
+- Capture CLIs and campaign scripts must import `open_oscilloscope()` / `open_generator()` from `instruments`. Do not import `instruments.oscilloscopes.<model>` or `instruments.generators.<model>` from campaign or `tools/` code.
+- Bench IPs and which model fills each role belong in `instruments/lab.json`. Override the scope for one run with `--scope <model_id>`.
+- A new oscilloscope is a driver implementing `Oscilloscope`, a registry entry, and a `lab.json` connection block. Return `lib.waveform.WaveformCapture` (`time_s`, `voltage_v`); keep vendor fields in `extra`.
+- Raw captures: NPZ + JSON in `Measurements/<campaign>/Data/`. Do not write campaign data next to a driver.
+
+```python
+# BAD
+from instruments.oscilloscopes.rigol_mso1104.driver import RigolMSO1104
+
+# GOOD
+from instruments import open_oscilloscope
+scope = open_oscilloscope()
+```

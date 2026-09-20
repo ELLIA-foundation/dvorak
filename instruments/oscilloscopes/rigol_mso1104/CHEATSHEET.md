@@ -92,8 +92,11 @@ Static IP/mask/gateway are stored in non-volatile memory when DHCP and Auto IP a
 
 ```powershell
 ping 192.168.147.110
-python RIGOL_MSO1104\test.py
+python tools\test_instruments.py --skip-generator
+python instruments\oscilloscopes\rigol_mso1104\test.py
 ```
+
+The bench IP is set in `instruments/lab.json` under `connections.rigol_mso1104`.
 
 ### VISA resource strings
 
@@ -106,7 +109,7 @@ python RIGOL_MSO1104\test.py
 
 ## 4. Python Connection Pattern
 
-See `test.py` for a working example. Minimal pattern:
+See `test.py` or `tools/test_instruments.py` for a working example. Minimal pattern:
 
 ```python
 import pyvisa
@@ -199,7 +202,7 @@ SCPI keywords are case-insensitive; Rigol uses mixed case in docs (e.g. `:CHANne
 
 ### Waveform download
 
-Use `capture_waveform.py`. Verified on this instrument: **2,400,000 points at 1 ns** from a stopped single-shot, vs **600 points** from on-screen / manual CSV.
+Use `python tools\capture_waveform.py --campaign Spark_Gap_Traces` (optional `--scope rigol_mso1104`). Verified on this instrument: **2,400,000 points at 1 ns** from a stopped single-shot, vs **600 points** from on-screen / manual CSV.
 
 | Mode | What you get | Typical points |
 |------|----------------|----------------|
@@ -219,7 +222,7 @@ Practical rules for this MSO1104Z:
 - Voltage: `(byte - YORigin - YREFerence) × YINCrement`
 - Time: `(index - XREFerence) × XINCrement + XORigin`
 
-Default save format is compressed **NPZ** plus a JSON sidecar (`--csv` optional).
+Default save format is compressed **NPZ** plus a JSON sidecar (`--csv` optional) under `Measurements/<campaign>/Data/`.
 
 ### Screenshot (PNG over SCPI)
 
@@ -269,7 +272,7 @@ Before relying on automated scripts:
 - [ ] **Apply** pressed after any network change
 - [ ] PC and scope on same subnet
 - [ ] `ping 192.168.147.110` succeeds
-- [ ] `python RIGOL_MSO1104\test.py` returns valid `*IDN?`
+- [ ] `python tools\test_instruments.py --skip-generator` returns a valid `*IDN?`
 - [ ] USB not overriding LAN (if using LAN only)
 
 ---
@@ -289,8 +292,9 @@ Download latest from [rigol.com](https://www.rigol.com):
 
 | File | Purpose |
 |------|---------|
-| `test.py` | Connection test — identity query and basic status readback |
-| `capture_waveform.py` | Deep-memory RAW extract of the current acquisition |
-| `rigol_scope.py` | Shared LAN connection helper |
-| `captures/` | Saved NPZ + JSON waveform files |
+| `driver.py` | Oscilloscope ABC implementation (RAW waveform download) |
+| `test.py` | Model-specific identity and channel status check |
+| `tools/test_instruments.py` | Role-based `*IDN?` check using `instruments/lab.json` |
+| `tools/capture_waveform.py` | Generic capture CLI; `--campaign` writes to `Measurements/<name>/Data/` |
+| `instruments/lab.json` | Bench roles and IP addresses |
 | `CHEATSHEET.md` | This reference |
