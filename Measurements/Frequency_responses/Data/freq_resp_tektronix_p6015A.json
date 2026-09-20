@@ -1,0 +1,432 @@
+{
+  "campaign": "Frequency_responses",
+  "measured_at": "2026-09-20T14:10:13",
+  "generator_idn": "Rigol Technologies,DG4202,DG4E154801409,00.01.07",
+  "oscilloscope_idn": "RIGOL TECHNOLOGIES,MHO954,MHO9B280501047,00.01.00",
+  "generator_model": "rigol_dg4062",
+  "oscilloscope_model": "rigol_mho954",
+  "gen_channel": 1,
+  "scope_channel": 1,
+  "load_ohm": null,
+  "load_highz": true,
+  "f_min_hz": 1000.0,
+  "f_max_hz": 200000000.0,
+  "points": 41,
+  "amplitude_requested_vpp": 1.0,
+  "amplitude_mode": "fixed",
+  "scope_bw_hz": 500000000.0,
+  "ratio_definition": "V_scope / V_nominal, where V_nominal is the generator sine Vpp (max at each frequency by default, or min(requested, max) when --amplitude is set)",
+  "rows": [
+    {
+      "frequency_hz": 1000.0,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0553,
+      "f_scope_hz": 1000.8,
+      "ratio": 1.0553,
+      "ratio_db": 0.46751876279124815,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 1356.830976209873,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0487,
+      "f_scope_hz": 1350.1,
+      "ratio": 1.0487,
+      "ratio_db": 0.4130253600868362,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 1840.9902980026347,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0547,
+      "f_scope_hz": 1844.2,
+      "ratio": 1.0547,
+      "ratio_db": 0.4625789202099137,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 2497.91266323182,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0511,
+      "f_scope_hz": 2504.0,
+      "ratio": 1.0511,
+      "ratio_db": 0.4328807217488614,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 3389.24527733983,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0505,
+      "f_scope_hz": 3374.6,
+      "ratio": 1.0505,
+      "ratio_db": 0.4279211348394276,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 4598.632978267703,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0485,
+      "f_scope_hz": 4625.3,
+      "ratio": 1.0485,
+      "ratio_db": 0.4113686960272529,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 6239.567673133883,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0443,
+      "f_scope_hz": 6265.0,
+      "ratio": 1.0443,
+      "ratio_db": 0.37650556007901637,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 8466.038697065811,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.057,
+      "f_scope_hz": 8483.5,
+      "ratio": 1.057,
+      "ratio_db": 0.48149974614852487,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 11486.98354997034,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0545,
+      "f_scope_hz": 11502.0,
+      "ratio": 1.0545,
+      "ratio_db": 0.46093168151010394,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 15585.895103813009,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0519,
+      "f_scope_hz": 15562.0,
+      "ratio": 1.0519,
+      "ratio_db": 0.43948910220120385,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 21147.425268811283,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0488,
+      "f_scope_hz": 21030.0,
+      "ratio": 1.0488,
+      "ratio_db": 0.41385357364055686,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 28693.48167180655,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0424,
+      "f_scope_hz": 28588.0,
+      "ratio": 1.0424,
+      "ratio_db": 0.3606880540905655,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 38932.204747617376,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0536,
+      "f_scope_hz": 39087.0,
+      "ratio": 1.0536,
+      "ratio_db": 0.45351523907454866,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 52824.42137371222,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0461,
+      "f_scope_hz": 52826.0,
+      "ratio": 1.0461,
+      "ratio_db": 0.39146404191277967,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 71673.81122021578,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0409,
+      "f_scope_hz": 71695.0,
+      "ratio": 1.0409,
+      "ratio_db": 0.34818017072422036,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 97249.24724660731,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0295,
+      "f_scope_hz": 97405.0,
+      "ratio": 1.0295,
+      "ratio_db": 0.2525270190810043,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 131950.7910772895,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0532,
+      "f_scope_hz": 131440.0,
+      "ratio": 1.0532,
+      "ratio_db": 0.4502170086806102,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 179034.9206690637,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.045,
+      "f_scope_hz": 179570.0,
+      "ratio": 1.045,
+      "ratio_db": 0.38232580894145557,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 242920.12618706233,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0397,
+      "f_scope_hz": 244760.0,
+      "ratio": 1.0397,
+      "ratio_db": 0.33816087944149836,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 329601.55195541796,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.028,
+      "f_scope_hz": 329940.0,
+      "ratio": 1.028,
+      "ratio_db": 0.23986229318513877,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 447213.59549995797,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 1.0093,
+      "f_scope_hz": 449080.0,
+      "ratio": 1.0093,
+      "ratio_db": 0.08040546506483255,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 606793.2593565352,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.957,
+      "f_scope_hz": 605220.0,
+      "ratio": 0.957,
+      "ratio_db": -0.38176124446312903,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 823315.8904502982,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.9012,
+      "f_scope_hz": 823420.0,
+      "ratio": 0.9012,
+      "ratio_db": -0.9035763389641356,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 1117100.5033687765,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.814,
+      "f_scope_hz": 1120500.0,
+      "ratio": 0.814,
+      "ratio_db": -1.787511902215976,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 1515716.5665104007,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.703,
+      "f_scope_hz": 1521400.0,
+      "ratio": 0.703,
+      "ratio_db": -3.0608934996035213,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 2056571.1885957795,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.59227,
+      "f_scope_hz": 2053300.0,
+      "ratio": 0.59227,
+      "ratio_db": -4.54960529870649,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 2790419.49346751,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.47927,
+      "f_scope_hz": 2809300.0,
+      "ratio": 0.47927,
+      "ratio_db": -6.388395098120422,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 3786127.6053565806,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.38053,
+      "f_scope_hz": 3812600.0,
+      "ratio": 0.38053,
+      "ratio_db": -8.392221977822764,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 5137135.214831118,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.2966,
+      "f_scope_hz": 5153600.0,
+      "ratio": 0.2966,
+      "ratio_db": -10.556577066152737,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 6970224.188461421,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.30113,
+      "f_scope_hz": 5135800.0,
+      "ratio": 0.30113,
+      "ratio_db": -10.424919517082019,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 9457416.09003176,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.1846,
+      "f_scope_hz": 9318800.0,
+      "ratio": 0.1846,
+      "ratio_db": -14.675366066202136,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 12832115.105860751,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.1542,
+      "f_scope_hz": NaN,
+      "ratio": 0.1542,
+      "ratio_db": -16.238312525701236,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 17411011.265922498,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.11753,
+      "f_scope_hz": NaN,
+      "ratio": 0.11753,
+      "ratio_db": -18.59702527695389,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 23623799.41274272,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.10993,
+      "f_scope_hz": NaN,
+      "ratio": 0.10993,
+      "ratio_db": -19.1776754406103,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 32053502.818977926,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.088667,
+      "f_scope_hz": NaN,
+      "ratio": 0.088667,
+      "ratio_db": -21.044759708112846,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 43491185.52081964,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.081933,
+      "f_scope_hz": NaN,
+      "ratio": 0.081933,
+      "ratio_db": -21.730822860680338,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 59010187.706738405,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.080867,
+      "f_scope_hz": NaN,
+      "ratio": 0.080867,
+      "ratio_db": -21.84457336051862,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 80066850.5924617,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.073533,
+      "f_scope_hz": NaN,
+      "ratio": 0.073533,
+      "ratio_db": -22.67035430633214,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 108637183.05142008,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.071867,
+      "f_scope_hz": NaN,
+      "ratio": 0.071867,
+      "ratio_db": -22.869409677134964,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 147402295.13234866,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.072,
+      "f_scope_hz": NaN,
+      "ratio": 0.072,
+      "ratio_db": -22.853350071374628,
+      "scope_limited": false
+    },
+    {
+      "frequency_hz": 200000000.0,
+      "v_requested_vpp": 1.0,
+      "v_nominal_vpp": 1.0,
+      "v_scope_vpp": 0.0606,
+      "f_scope_hz": NaN,
+      "ratio": 0.0606,
+      "ratio_db": -24.350547516674276,
+      "scope_limited": false
+    }
+  ],
+  "run_name": "tektronix_p6015A"
+}

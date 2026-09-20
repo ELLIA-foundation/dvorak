@@ -14,7 +14,7 @@ for _parent in Path(__file__).resolve().parents:
 else:
     raise SystemExit("Could not find repository root (expected lib/paths.py and Measurements/).")
 
-from instruments.registry import load_lab, open_generator, open_oscilloscope
+from instruments.registry import list_oscilloscopes, load_lab, open_generator, open_oscilloscope
 
 
 def _check_oscilloscope(model_id: str | None) -> None:
@@ -54,7 +54,10 @@ def main() -> None:
         "--scope",
         type=str,
         default=None,
-        help="Oscilloscope model id override",
+        help=(
+            "Oscilloscope model id override "
+            f"(registered: {', '.join(list_oscilloscopes()) or '(none)'})"
+        ),
     )
     parser.add_argument(
         "--generator",

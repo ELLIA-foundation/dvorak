@@ -59,3 +59,7 @@ class SignalGenerator(ABC):
     @abstractmethod
     def query_channel(self, channel: int) -> dict:
         """Return the current waveform, amplitude, and output state."""
+
+    @abstractmethod
+    def max_sine_vpp(self, frequency_hz: float) -> float:
+        """Largest sine Vpp allowed at this frequency for the current load."""

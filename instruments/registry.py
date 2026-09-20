@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,17 @@ from instruments.generator import SignalGenerator
 from instruments.oscilloscope import Oscilloscope
 
 LAB_CONFIG_PATH = Path(__file__).resolve().parent / "lab.json"
+
+
+class OscilloscopeId(StrEnum):
+    """Registered oscilloscope model ids (lab.json ``connections`` keys)."""
+
+    MSO1104 = "rigol_mso1104"
+    MHO954 = "rigol_mho954"
+
+
+# Flip this to change what open_oscilloscope() / CLIs use when --scope is omitted.
+DEFAULT_OSCILLOSCOPE = OscilloscopeId.MSO1104
 
 
 def load_lab(path: Path | None = None) -> dict[str, Any]:
@@ -34,10 +46,12 @@ def _role_model(role: str, model_id: str | None, config: dict[str, Any]) -> str:
 
 
 def _oscilloscope_classes() -> dict[str, type[Oscilloscope]]:
+    from instruments.oscilloscopes.rigol_mho954.driver import RigolMHO954
     from instruments.oscilloscopes.rigol_mso1104.driver import RigolMSO1104
 
     return {
-        "rigol_mso1104": RigolMSO1104,
+        OscilloscopeId.MSO1104: RigolMSO1104,
+        OscilloscopeId.MHO954: RigolMHO954,
     }
 
 
@@ -50,17 +64,26 @@ def _generator_classes() -> dict[str, type[SignalGenerator]]:
 
 
 def list_oscilloscopes() -> list[str]:
-    return sorted(_oscilloscope_classes())
+    return sorted(str(name) for name in _oscilloscope_classes())
 
 
 def list_generators() -> list[str]:
     return sorted(_generator_classes())
 
 
-def open_oscilloscope(model_id: str | None = None) -> Oscilloscope:
-    """Construct and connect the oscilloscope for this bench (or ``model_id``)."""
+def open_oscilloscope(model_id: str | OscilloscopeId | None = None) -> Oscilloscope:
+    """Construct and connect the oscilloscope for this bench (or ``model_id``).
+
+    Resolution: explicit ``model_id`` / ``--scope`` → ``DEFAULT_OSCILLOSCOPE``
+    → ``lab.json`` ``roles.oscilloscope``.
+    """
     config = load_lab()
-    chosen = _role_model("oscilloscope", model_id, config)
+    if model_id:
+        chosen = str(model_id)
+    elif DEFAULT_OSCILLOSCOPE:
+        chosen = str(DEFAULT_OSCILLOSCOPE)
+    else:
+        chosen = _role_model("oscilloscope", None, config)
     classes = _oscilloscope_classes()
     if chosen not in classes:
         known = ", ".join(classes) or "(none)"

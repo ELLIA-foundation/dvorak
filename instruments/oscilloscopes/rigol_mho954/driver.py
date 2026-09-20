@@ -1,8 +1,8 @@
-"""Rigol MSO1104Z LAN driver (MSO1000Z / DS1000Z series).
+"""Rigol MHO954 LAN driver (MHO900 series).
 
-Uses deep-memory RAW mode with binary (BYTE) transfers in official-size
-chunks (250000 points). RAW :WAVeform:DATA? hangs on the port-5555 SOCKET
-transport on this firmware; VXI-11 (INSTR) is required for downloads.
+12-bit mixed-signal scope. Waveform download uses RAW mode with binary WORD
+(little-endian uint16) transfers. Empty :WAVeform:DATA? means no acquisition is
+in memory yet — RUN or SINGLE first, then STOP.
 """
 
 from __future__ import annotations
@@ -20,23 +20,19 @@ from lib.waveform import WaveformCapture
 DEFAULT_CHANNEL = 1
 DEFAULT_CHUNK_SIZE = 250_000
 DEFAULT_MAX_RETRIES = 5
-HORIZONTAL_DIVISIONS = 12
+HORIZONTAL_DIVISIONS = 10
 VERTICAL_DIVISIONS = 8
-SCREEN_COUNTS_PER_DIV = 25
-BYTE_MIDSCALE = 127
-STANDARD_MEMORY_DEPTHS = (12_000, 120_000, 1_200_000, 6_000_000, 12_000_000, 24_000_000)
-MIN_TIMEBASE_S_DIV = 5e-9
+WORD_COUNTS_PER_DIV = 7500
+WORD_MIDSCALE = 32768
+MIN_TIMEBASE_S_DIV = 500e-12
 MIN_VERTICAL_V_DIV = 1e-3
 MAX_VERTICAL_V_DIV = 10.0
 INVALID_MEASURE = 9.9e37
 SINE_CYCLES_ON_SCREEN = 8
-# Leave headroom: actual Vpp can be ~2x V_nominal (50 ohm setting into High-Z).
 SINE_VERTICAL_DIVS = 2
 
 
 def _resource_candidates(ip: str) -> list[str]:
-    # INSTR first: SOCKET desyncs after some writes (e.g. :CHANnelN:OFFSet)
-    # so the next :MEASure query times out.
     return [
         f"TCPIP0::{ip}::INSTR",
         f"TCPIP0::{ip}::5555::SOCKET",
@@ -51,8 +47,8 @@ def _is_invalid_measure(value: float) -> bool:
     return not math.isfinite(value) or abs(value) >= INVALID_MEASURE * 0.5
 
 
-class RigolMSO1104(Oscilloscope):
-    model_id = "rigol_mso1104"
+class RigolMHO954(Oscilloscope):
+    model_id = "rigol_mho954"
 
     def __init__(self, connection: dict | None = None) -> None:
         super().__init__(connection)
@@ -60,13 +56,12 @@ class RigolMSO1104(Oscilloscope):
         self._scope = None
         self.resource_name = ""
         self._idn = ""
-        self._prefer_instr = False
 
     @property
     def ip(self) -> str:
         ip = self.connection.get("ip")
         if not ip:
-            raise ValueError("rigol_mso1104 connection is missing 'ip' (see instruments/lab.json)")
+            raise ValueError("rigol_mho954 connection is missing 'ip' (see instruments/lab.json)")
         return str(ip)
 
     @property
@@ -95,13 +90,12 @@ class RigolMSO1104(Oscilloscope):
                 self._scope = scope
                 self.resource_name = resource
                 self._idn = idn
-                self._prefer_instr = resource.endswith("INSTR")
                 return
             except Exception as exc:
                 last_error = exc
                 continue
         rm.close()
-        raise RuntimeError(f"Could not open Rigol MSO1104Z at {self.ip}: {last_error}")
+        raise RuntimeError(f"Could not open Rigol MHO954 at {self.ip}: {last_error}")
 
     def close(self) -> None:
         if self._scope is not None:
@@ -118,7 +112,6 @@ class RigolMSO1104(Oscilloscope):
             self._rm = None
         self.resource_name = ""
         self._idn = ""
-        self._prefer_instr = False
 
     def identify(self) -> str:
         if self._scope is None:
@@ -132,8 +125,7 @@ class RigolMSO1104(Oscilloscope):
         frequency_hz: float,
         expected_vpp: float,
     ) -> None:
-        if channel not in (1, 2, 3, 4):
-            raise ValueError("MSO1104 analog channels are 1-4")
+        _require_analog_channel(channel)
         if frequency_hz <= 0:
             raise ValueError("frequency_hz must be positive")
         if expected_vpp <= 0:
@@ -149,7 +141,7 @@ class RigolMSO1104(Oscilloscope):
         scope.write(f":CHANnel{channel}:OFFSet 0")
         scope.write(f":TIMebase:MAIN:SCALe {tdiv}")
         scope.write(":TRIGger:MODE EDGE")
-        scope.write(f":TRIGger:EDGe:SOURce CHAN{channel}")
+        scope.write(f":TRIGger:EDGe:SOURce CHANnel{channel}")
         scope.write(":TRIGger:EDGe:SLOPe POSitive")
         scope.write(":TRIGger:EDGe:LEVel 0")
         scope.write(":TRIGger:SWEep AUTO")
@@ -180,8 +172,7 @@ class RigolMSO1104(Oscilloscope):
         return True
 
     def _measure_item(self, item: str, channel: int) -> float:
-        if channel not in (1, 2, 3, 4):
-            raise ValueError("MSO1104 analog channels are 1-4")
+        _require_analog_channel(channel)
         if self._scope is None:
             self.connect()
         try:
@@ -203,7 +194,7 @@ class RigolMSO1104(Oscilloscope):
         scope.timeout = max(previous, 10_000)
         try:
             scope.write(f":MEASure:ITEM {item},CHANnel{channel}")
-            raw = scope.query(f":MEASure:{item}? CHANnel{channel}").strip()
+            raw = scope.query(f":MEASure:ITEM? {item},CHANnel{channel}").strip()
             return float(raw)
         finally:
             scope.timeout = previous
@@ -216,6 +207,9 @@ class RigolMSO1104(Oscilloscope):
         **kwargs,
     ) -> WaveformCapture:
         del kwargs
+        _require_analog_channel(channel)
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         if chunk_size > DEFAULT_CHUNK_SIZE:
             chunk_size = DEFAULT_CHUNK_SIZE
 
@@ -223,17 +217,19 @@ class RigolMSO1104(Oscilloscope):
         scope = self.visa
 
         _ensure_stopped(scope)
-        print("Acquisition is stopped; switching to RAW mode")
+        print("Acquisition is stopped; switching to RAW WORD mode")
         _enable_raw_mode(scope, channel)
 
         total_points, memory_depth = _resolve_raw_points(scope)
         if total_points <= 0:
-            raise RuntimeError("Scope reported zero waveform points")
+            raise RuntimeError(
+                "Scope reported zero waveform points. Acquire a trace (RUN or SINGLE) before capture."
+            )
         print(f"Memory depth: {memory_depth} ({total_points:,} points)")
 
         scope.write(":WAVeform:STARt 1")
         scope.write(f":WAVeform:STOP {min(total_points, chunk_size)}")
-        preamble = _parse_preamble(scope.query(":WAVeform:PRE?").strip())
+        preamble = _parse_preamble(scope.query(":WAVeform:PREamble?").strip())
         y_inc, y_orig, y_ref, y_source = _vertical_scale(scope, preamble, channel)
         print(
             f"Preamble: mode={preamble['type_code']} "
@@ -255,7 +251,12 @@ class RigolMSO1104(Oscilloscope):
                 break
             start += len(chunk)
 
-        raw = np.asarray(raw_values, dtype=np.uint8)
+        if not raw_values:
+            raise RuntimeError(
+                "WAVE:DATA? returned no samples. Acquire a trace (RUN or SINGLE), STOP, then capture."
+            )
+
+        raw = np.asarray(raw_values, dtype=np.uint16)
         x_inc = preamble["x_increment"]
         x_orig = preamble["x_origin"]
         x_ref = preamble["x_reference"]
@@ -269,12 +270,13 @@ class RigolMSO1104(Oscilloscope):
             idn=scope.query("*IDN?").strip(),
             model_id=self.model_id,
             channel=channel,
-            sample_rate_hz=_query_float(scope, ":ACQ:SRAT?"),
+            sample_rate_hz=_query_float(scope, ":ACQuire:SRATe?"),
             points=int(len(raw)),
             captured_at=datetime.now().isoformat(timespec="seconds"),
             extra={
                 "resource": self.resource_name,
                 "mode": "RAW",
+                "format": "WORD",
                 "memory_depth": memory_depth,
                 "timebase_s_div": _query_float(scope, ":TIMebase:MAIN:SCALe?"),
                 "time_offset_s": _query_float(scope, ":TIMebase:MAIN:OFFSet?"),
@@ -293,6 +295,11 @@ class RigolMSO1104(Oscilloscope):
         )
 
 
+def _require_analog_channel(channel: int) -> None:
+    if channel not in (1, 2, 3, 4):
+        raise ValueError("MHO954 analog channels are 1-4")
+
+
 def _ensure_stopped(scope) -> None:
     """Leave an already-stopped acquisition in place; stop only if running."""
     status = scope.query(":TRIGger:STATus?").strip().upper()
@@ -309,66 +316,48 @@ def _ensure_stopped(scope) -> None:
 
 
 def _parse_preamble(preamble: str) -> dict:
-    """Parse :WAVeform:PRE? for the DS1000Z / MSO1000Z series."""
+    """Parse :WAVeform:PREamble? for the MHO900 series."""
     parts = [part.strip() for part in preamble.split(",")]
     if len(parts) < 10:
         raise ValueError(f"Unexpected waveform preamble: {preamble!r}")
 
     return {
-        "format_code": int(parts[0]),
-        "type_code": int(parts[1]),
-        "points": int(parts[2]),
-        "count": int(parts[3]),
+        "format_code": int(float(parts[0])),
+        "type_code": int(float(parts[1])),
+        "points": int(float(parts[2])),
+        "count": int(float(parts[3])),
         "x_increment": float(parts[4]),
         "x_origin": float(parts[5]),
-        "x_reference": int(parts[6]),
+        "x_reference": float(parts[6]),
         "y_increment": float(parts[7]),
         "y_origin": float(parts[8]),
-        "y_reference": int(parts[9]),
+        "y_reference": float(parts[9]),
     }
 
 
-def _expected_memory_points(scope) -> tuple[int, str]:
-    """Estimate record length from sample rate and timebase when MDEP is AUTO."""
-    raw = scope.query(":ACQ:MDEP?").strip()
-    sample_rate = _query_float(scope, ":ACQ:SRAT?")
+def _memory_points(scope) -> tuple[int, str]:
+    """Current record length. Does not raise memory depth."""
+    raw = scope.query(":ACQuire:MDEPth?").strip()
+    sample_rate = _query_float(scope, ":ACQuire:SRATe?")
     timebase = _query_float(scope, ":TIMebase:MAIN:SCALe?")
     computed = int(round(sample_rate * timebase * HORIZONTAL_DIVISIONS))
-    if raw.upper() != "AUTO":
-        return int(float(raw)), raw
-    return computed, raw
-
-
-def _request_raw_window(scope, points: int) -> int:
-    """Set RAW start/stop. Do not overshoot: this firmware may clamp to 2.4 Mpts."""
-    scope.write(":WAVeform:STARt 1")
-    scope.write(f":WAVeform:STOP {points}")
-    time.sleep(0.05)
-    return int(float(scope.query(":WAVeform:STOP?").strip()))
+    if raw.upper() == "AUTO":
+        return max(computed, 1), raw
+    return max(int(float(raw)), 1), raw
 
 
 def _resolve_raw_points(scope) -> tuple[int, str]:
-    expected, memory_depth = _expected_memory_points(scope)
-    accepted = _request_raw_window(scope, expected)
-    if accepted >= expected:
-        return accepted, memory_depth
-
-    for depth in STANDARD_MEMORY_DEPTHS:
-        if depth <= expected:
-            continue
-        accepted = _request_raw_window(scope, depth)
-        if accepted >= expected:
-            return accepted, memory_depth
-        if accepted > expected:
-            return accepted, memory_depth
-
-    return max(accepted, expected), memory_depth
+    expected, memory_depth = _memory_points(scope)
+    scope.write(":WAVeform:STARt 1")
+    scope.write(f":WAVeform:STOP {expected}")
+    time.sleep(0.05)
+    accepted = int(float(scope.query(":WAVeform:STOP?").strip()))
+    return max(accepted, 1), memory_depth
 
 
 def _enable_raw_mode(scope, channel: int) -> None:
-    """Switch to RAW. A start/stop window is required or the mode stays NORM."""
-    scope.write(f":WAVeform:SOURce CHAN{channel}")
-    scope.write(":WAVeform:FORMat BYTE")
+    scope.write(f":WAVeform:SOURce CHANnel{channel}")
+    scope.write(":WAVeform:FORMat WORD")
     scope.write(":WAVeform:MODE RAW")
     scope.write(":WAVeform:STARt 1")
     scope.write(":WAVeform:STOP 2")
@@ -378,25 +367,49 @@ def _enable_raw_mode(scope, channel: int) -> None:
         raise RuntimeError(f"Could not enter RAW waveform mode (got {mode!r})")
 
 
-def _vertical_scale(scope, preamble: dict, channel: int) -> tuple[float, float, int, str]:
-    """Return (y_inc, y_orig, y_ref, source).
-
-    RAW :WAVeform:PRE? on this firmware can report YREFerence=305, which is
-    invalid for BYTE data. The programming guide says YREFerence is always 127
-    (screen bottom=0, top=255) and NORMal YINCrement = VerticalScale/25.
-    """
+def _vertical_scale(scope, preamble: dict, channel: int) -> tuple[float, float, float, str]:
+    """Return (y_inc, y_orig, y_ref, source). WORD midscale is 32768."""
     y_inc = float(preamble["y_increment"])
     y_orig = float(preamble["y_origin"])
-    y_ref = int(preamble["y_reference"])
-    if 0 <= y_ref <= 255:
+    y_ref = float(preamble["y_reference"])
+    if 0 <= y_ref <= 65535 and y_inc != 0:
         return y_inc, y_orig, y_ref, "preamble"
 
     scale = _query_float(scope, f":CHANnel{channel}:SCALe?")
     offset = _query_float(scope, f":CHANnel{channel}:OFFSet?")
-    y_inc = scale / SCREEN_COUNTS_PER_DIV
-    y_ref = BYTE_MIDSCALE
+    y_inc = scale / WORD_COUNTS_PER_DIV
+    y_ref = float(WORD_MIDSCALE)
     y_orig = offset / y_inc if y_inc else 0.0
-    return y_inc, y_orig, y_ref, "channel_scale/25"
+    return y_inc, y_orig, y_ref, "channel_scale/7500"
+
+
+def _ieee_payload(raw: bytes) -> bytes:
+    if not raw.startswith(b"#"):
+        raise RuntimeError(f"WAVE:DATA? did not start with an IEEE block header: {raw[:24]!r}")
+    nlen = int(chr(raw[1]))
+    nbytes = int(raw[2 : 2 + nlen])
+    return raw[2 + nlen : 2 + nlen + nbytes]
+
+
+def _read_word_block(scope) -> list[int]:
+    try:
+        chunk = scope.query_binary_values(
+            ":WAVeform:DATA?",
+            datatype="H",
+            is_big_endian=False,
+            container=list,
+            header_fmt="ieee",
+            expect_termination=True,
+        )
+        if chunk:
+            return [int(value) for value in chunk]
+    except Exception:
+        pass
+    scope.write(":WAVeform:DATA?")
+    payload = _ieee_payload(scope.read_raw())
+    if not payload:
+        return []
+    return np.frombuffer(payload, dtype="<u2").tolist()
 
 
 def _read_chunk(scope, start: int, stop: int, max_retries: int) -> list[int]:
@@ -406,13 +419,7 @@ def _read_chunk(scope, start: int, stop: int, max_retries: int) -> list[int]:
         try:
             scope.write(f":WAVeform:STARt {start}")
             scope.write(f":WAVeform:STOP {stop}")
-            chunk = scope.query_binary_values(
-                ":WAVeform:DATA?",
-                datatype="B",
-                container=list,
-                header_fmt="ieee",
-                expect_termination=True,
-            )
+            chunk = _read_word_block(scope)
             if not chunk:
                 raise RuntimeError(f"Chunk {start}-{stop}: empty response")
             if len(chunk) > expected:

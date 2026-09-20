@@ -4,6 +4,18 @@ Campaigns and tools should import ``open_oscilloscope`` / ``open_generator``
 from this package, not a specific model module.
 """
 
-from instruments.registry import load_lab, open_generator, open_oscilloscope
+from instruments.registry import (
+    DEFAULT_OSCILLOSCOPE,
+    OscilloscopeId,
+    load_lab,
+    open_generator,
+    open_oscilloscope,
+)
 
-__all__ = ["load_lab", "open_generator", "open_oscilloscope"]
+__all__ = [
+    "DEFAULT_OSCILLOSCOPE",
+    "OscilloscopeId",
+    "load_lab",
+    "open_generator",
+    "open_oscilloscope",
+]

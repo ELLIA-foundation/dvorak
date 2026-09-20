@@ -16,7 +16,11 @@ else:
 
 from pyvisa import VisaIOError
 
-from instruments.registry import list_oscilloscopes, load_lab, open_oscilloscope
+from instruments.registry import (
+    DEFAULT_OSCILLOSCOPE,
+    list_oscilloscopes,
+    open_oscilloscope,
+)
 from lib.paths import campaign_data, list_campaigns
 from lib.waveform import save_waveform
 
@@ -37,9 +41,7 @@ def _resolve_output_dir(campaign: str | None, output_dir: Path | None) -> Path:
 
 
 def main() -> None:
-    lab = load_lab()
-    default_scope = lab.get("roles", {}).get("oscilloscope")
-
+    registered = list_oscilloscopes()
     parser = argparse.ArgumentParser(
         description="Extract the current oscilloscope acquisition into a campaign Data/ folder."
     )
@@ -53,9 +55,11 @@ def main() -> None:
         "--scope",
         type=str,
         default=None,
+        choices=registered or None,
         help=(
-            "Oscilloscope model id (default: instruments/lab.json role). "
-            f"Registered: {', '.join(list_oscilloscopes()) or '(none)'}"
+            "Oscilloscope model id "
+            f"(default: {DEFAULT_OSCILLOSCOPE}). "
+            f"Registered: {', '.join(registered) or '(none)'}"
         ),
     )
     parser.add_argument(
@@ -68,7 +72,7 @@ def main() -> None:
         "--chunk-size",
         type=int,
         default=250_000,
-        help="Driver-specific points per transfer (MSO1104 BYTE max 250000)",
+        help="Driver-specific points per VISA transfer (default: 250000)",
     )
     parser.add_argument(
         "--output-dir",
@@ -84,9 +88,7 @@ def main() -> None:
     args = parser.parse_args()
 
     output_dir = _resolve_output_dir(args.campaign, args.output_dir)
-    model_id = args.scope or default_scope
-
-    scope = open_oscilloscope(model_id)
+    scope = open_oscilloscope(args.scope)
     try:
         print(f"Connected: {scope.identify()}")
         print(f"Model:     {scope.model_id}")

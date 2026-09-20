@@ -37,3 +37,20 @@ class Oscilloscope(ABC):
     @abstractmethod
     def capture_channel(self, channel: int = 1, **kwargs) -> WaveformCapture:
         """Download the waveform currently in memory for one analog channel."""
+
+    @abstractmethod
+    def prepare_sine(
+        self,
+        channel: int,
+        frequency_hz: float,
+        expected_vpp: float,
+    ) -> None:
+        """Set timebase and vertical scale for a sine of the given frequency and Vpp."""
+
+    @abstractmethod
+    def measure_vpp(self, channel: int) -> float:
+        """Peak-to-peak voltage on one analog channel."""
+
+    @abstractmethod
+    def measure_frequency(self, channel: int) -> float:
+        """Measured frequency on one analog channel."""

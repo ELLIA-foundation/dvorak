@@ -27,6 +27,14 @@ SHAPE_COMMANDS: dict[str, str] = {
 }
 
 HIGH_Z = math.inf
+SINE_MAX_HZ = 200e6
+# Datasheet sine Vpp into 50 ohm (High-Z is 2x).
+SINE_VPP_50OHM = (
+    (20e6, 10.0),
+    (70e6, 5.0),
+    (120e6, 2.5),
+    (SINE_MAX_HZ, 1.0),
+)
 
 
 def _resource_candidates(ip: str) -> list[str]:
@@ -79,6 +87,7 @@ class RigolDG4062(SignalGenerator):
         self._inst = None
         self.resource_name = ""
         self._idn = ""
+        self._load_ohm = 50.0
 
     @property
     def ip(self) -> str:
@@ -176,8 +185,29 @@ class RigolDG4062(SignalGenerator):
         ch = _channel(channel)
         if math.isinf(ohms):
             self.visa.write(f":OUTPut{ch}:LOAD INFinity")
+            self._load_ohm = HIGH_Z
             return
         self.visa.write(f":OUTPut{ch}:LOAD {ohms}")
+        self._load_ohm = float(ohms)
+
+    def max_sine_vpp(self, frequency_hz: float) -> float:
+        if frequency_hz <= 0:
+            raise ValueError("frequency_hz must be positive")
+        if frequency_hz > SINE_MAX_HZ:
+            if math.isclose(frequency_hz, SINE_MAX_HZ, rel_tol=0.0, abs_tol=1.0):
+                frequency_hz = SINE_MAX_HZ
+            else:
+                raise ValueError(
+                    f"Sine frequency {frequency_hz} Hz exceeds {SINE_MAX_HZ:.0f} Hz"
+                )
+        limit_50 = SINE_VPP_50OHM[-1][1]
+        for cutoff_hz, vpp in SINE_VPP_50OHM:
+            if frequency_hz <= cutoff_hz:
+                limit_50 = vpp
+                break
+        if math.isinf(self._load_ohm):
+            return 2.0 * limit_50
+        return limit_50
 
     def output(self, channel: int, enabled: bool) -> None:
         ch = _channel(channel)
