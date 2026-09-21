@@ -85,7 +85,7 @@ DEFAULT_CAPACITANCE_F = None
 DEFAULT_WRITE_CSV = False
 
 # Label for capture filenames and the analysis summary. None = timestamp-only stem.
-DEFAULT_RUN_NAME = "test3"
+DEFAULT_RUN_NAME = "no_resistor"
 
 # RAW slice: "screen" = 12-div window (verified against the scope), "full" = all memory.
 DEFAULT_WINDOW = "screen"

@@ -1,0 +1,37 @@
+# Spark-gap event table. SI units unless noted in SPARK_GAP_METRICS.md.
+# Storage units: s, V, V/s, Hz, J, C, A, H.
+# event_index [1]: 0-based order of detected collapses. Used to plot conditioning.
+# first_cycle [bool]: True when the preceding ramp is much flatter than the later population (startup / long plateau). Kept in the event table; excluded from typical stats.
+# t_break [s]: Collapse-start time: first sample of the steepest ~20 ns drop. Event timestamp for all intervals; not the 1-sample voltage maximum.
+# v_breakdown [V]: Median voltage over the ~20-50 ns plateau immediately before t_break. Repetitive breakdown voltage for that shot.
+# v_undershoot [V]: Minimum in the ~200 ns after t_break. Includes inductive kick / probe ringing.
+# v_residual [V]: Median voltage after ringing settles (~1-5 us post-edge), at the start of the next charging ramp. Recovery / restart voltage for the next cycle.
+# dv_collapse [V]: v_breakdown - v_undershoot. Total observed swing including undershoot.
+# period_s [s]: t_break[i] - t_break[i-1]. Undefined for event 0.
+# rep_rate_hz [Hz]: 1 / period_s for that interval.
+# t_collapse_10_90 [s]: t90 - t10. IEC/scope 10-90% fall time of the discharge edge.
+# slew_collapse_mean [V/s]: 0.8 * (v_pre - v_post) / t_collapse_10_90. Mean collapse gradient; a lower bound set by scope bandwidth.
+# slew_collapse_peak [V/s]: Maximum |dV/dt| over a 5 ns window on the falling edge.
+# t_ring [s]: Dominant post-collapse ring period in the 50-400 ns window (median peak spacing of the residual after a short moving mean).
+# charge_rate [V/s]: Least-squares slope of the linear charging ramp from residual settle to ~100 ns before t_break. I ≈ C * charge_rate if C is known.
+# charge_r2 [1]: Coefficient of determination of the linear ramp fit. Low R² flags a non-linear ramp.
+# v_charge_start [V]: Voltage at the start of the ramp-fit window.
+# v_charge_end [V]: Voltage at the end of the ramp-fit window (near v_breakdown).
+# recovery_s [s]: Time from t_break until a short local slope matches the next-cycle charge rate. Duration of the post-spark transient.
+# energy_j [J]: 0.5 * C * v_breakdown^2. Only when --capacitance is given.
+# charge_c [C]: C * (v_breakdown - v_residual). Only when --capacitance is given.
+# source_current_a [A]: C * charge_rate during the linear ramp. Only when --capacitance is given.
+# L_est_h [H]: 1 / ((2π / t_ring)^2 * C) if t_ring and C are known.
+event_index,first_cycle,t_break,v_breakdown,v_undershoot,v_residual,dv_collapse,period_s,rep_rate_hz,t_collapse_10_90,slew_collapse_mean,slew_collapse_peak,t_ring,charge_rate,charge_r2,v_charge_start,v_charge_end,recovery_s,energy_j,charge_c,source_current_a,L_est_h
+0,True,-0.0019448672,6203.7118,-1348.633,-539.4532,7552.3448,,,1.1999999999972102e-08,503489653334.5039,647343840000.0001,1.4499999999957255e-08,964587.2248315299,0.020429149164749805,1078.9064,6203.7118,,,,,
+1,True,-0.0015343721999999998,6203.7118,-1888.0862000000002,-539.4532,8091.798000000001,0.0004104950000000001,2436.083265326008,1.1999999999972102e-08,539453200001.2542,701289160000.0,1.2999999999879427e-08,6111900.976516543,0.2074067947372059,-809.1798000000001,6203.7118,,,,,
+2,True,-0.0011191921999999998,4855.0788,-1348.633,-269.7266,6203.7118,0.00041518,2408.5938629028374,1.0999999999847937e-08,451179040006.2371,539453200000.0,1.6000000000035083e-08,5212914.827558234,0.1557442040521374,-809.1798000000001,4855.0788,,,,,
+3,True,-7.199999999853157e-09,6743.165000000001,-1348.633,-539.4532,8091.798000000001,0.001119185,893.507328993866,1.1999999999755262e-08,539453200011.00214,917070440000.0002,9.000000000033287e-09,1747632.3865281588,0.11231818593286202,-539.4532,6743.165000000001,,,,,
+4,False,0.0001529098000000004,4855.0788,-809.1798000000001,-269.7266,5664.2586,0.00015291700000000024,6539.495281754143,1.2000000000188943e-08,377617239994.0544,431562560000.0,1.14999999998016e-08,36273664.37107838,0.9927058022317581,-809.1798000000001,4855.0788,,,,,
+5,False,0.0002939698000000001,4315.6256,-1078.9064,-269.7266,5394.532,0.0001410599999999997,7089.181908407784,1.1000000000281618e-08,392329599989.95575,485507880000.0,1.1000000000281618e-08,35956813.233660884,0.992292502568994,-539.4532,4315.6256,,,,,
+6,False,0.00043768180000000037,5394.532,-1078.9064,-269.7266,6473.4384,0.00014371200000000027,6958.361166777988,1.2000000000188943e-08,431562559993.20496,701289160000.0,1.0999999999847937e-08,34291882.44367394,0.992643038311521,-539.4532,5394.532,,,,,
+7,False,0.0007394508000000003,5394.532,-1348.633,-269.7266,6743.165,0.0003017689999999999,3313.7930006064253,1.1999999999755262e-08,449544333342.5017,647343840000.0001,9.000000000033287e-09,13488441.606693618,0.5606425952967429,-809.1798000000001,5394.532,,,,,
+8,False,0.0008871908000000002,4855.0788,-1348.633,-269.7266,6203.7118,0.00014773999999999994,6768.6476242046865,7.999999999692281e-09,566425860021.7876,485507880000.0,1.4000000000003593e-08,31574856.22163394,0.9849414882039973,-539.4532,4855.0788,,,,,
+9,False,0.0012005568000000005,5124.8054,-1618.3596000000002,-269.7266,6743.165000000001,0.00031336600000000025,3191.1566666453896,1.0999999999414256e-08,490412000026.11426,701289160000.0001,1.3999999999569912e-08,12499435.235493317,0.5937158463818759,-539.4532,5124.8054,,,,,
+10,False,0.0014312348000000003,5664.2586,-1348.633,-269.7266,7012.8916,0.00023067799999999979,4335.0471219622195,1.1000000000281618e-08,510028479986.94244,539453200000.0001,1.8000000000066574e-08,26693333.13836495,0.9943923587807548,-539.4532,5664.2586,,,,,
+11,False,0.0016433858,5124.8054,-1078.9064,-269.7266,6203.7118,0.00021215099999999983,4713.623786831082,1.2000000000622624e-08,413580786645.20795,647343840000.0,9.999999999940612e-09,23889241.118202962,0.9893633975337296,-539.4532,5124.8054,,,,,

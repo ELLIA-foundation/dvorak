@@ -1,0 +1,570 @@
+{
+  "source": "C:\\Users\\dilna1\\Projects\\dvo\u0159\u00e1k\\Measurements\\Spark_Gap_Traces\\Data\\waveform_1ohm_single_20260921_134105_ch1.npz",
+  "campaign": "Spark_Gap_Traces",
+  "run": {
+    "mode": "acquire",
+    "oscilloscope_idn": "RIGOL TECHNOLOGIES,MSO1104Z,DS1ZC170900250,00.04.02.SP4",
+    "oscilloscope_model": "rigol_mso1104",
+    "scope_channel": 1,
+    "chunk_size": 250000,
+    "write_csv": false,
+    "window": "screen",
+    "run_name": "1ohm_single",
+    "scope_bw_hz": 100000000.0,
+    "drop_threshold_v": 5000.0,
+    "drop_window_s": 1e-07,
+    "merge_gap_s": 5e-06,
+    "include_first": false,
+    "capacitance_f": null
+  },
+  "metadata": {
+    "idn": "RIGOL TECHNOLOGIES,MSO1104Z,DS1ZC170900250,00.04.02.SP4",
+    "model_id": "rigol_mso1104",
+    "channel": 1,
+    "sample_rate_hz": 999999999.9999999,
+    "points": 6000000,
+    "captured_at": "2026-09-21T13:41:05",
+    "resource": "TCPIP0::192.168.147.110::INSTR",
+    "mode": "RAW",
+    "verify_required": true,
+    "window": "screen",
+    "memory_depth": "AUTO",
+    "memory_points": 6000000,
+    "timebase_s_div": 0.0005,
+    "time_offset_s": 0.0002105798,
+    "screen_t_left_s": -0.0027894202,
+    "screen_t_right_s": 0.0032105798,
+    "channel_scale_v_div": 5000.0,
+    "channel_offset_v": 0.0,
+    "probe_ratio": 1000.0,
+    "y_increment_v": 269.7266,
+    "y_origin_v": 0.0,
+    "y_reference": 94.0,
+    "y_scale_source": "preamble",
+    "measure_vmin_v": -3200.0,
+    "measure_vmax_v": 8000.0,
+    "trigger_status": "STOP",
+    "x_increment_s": 1e-09,
+    "x_origin_s": -0.0027894202,
+    "x_reference": 0,
+    "raw_start": 1,
+    "raw_stop": 6000000,
+    "memory_t0_s": -0.0027894202,
+    "verify_ok": true,
+    "verify_vmin_v": -3236.7192000000005,
+    "verify_vmax_v": 8091.798000000001,
+    "verify_norm_corr": 0.9164874204695094,
+    "run_name": "1ohm_single"
+  },
+  "detection": {
+    "drop_threshold_v": 5000.0,
+    "drop_window_s": 1e-07,
+    "merge_gap_s": 5e-06,
+    "coarse_step_s": 5e-08,
+    "n_events": 8,
+    "n_typical": 6,
+    "sample_rate_hz": 999999999.9999999,
+    "sample_interval_s": 1e-09,
+    "y_increment_v": 269.7266,
+    "lsb_v": 269.7266,
+    "scope_bw_hz": 100000000.0,
+    "scope_t1090_limit_s": 3.5e-09,
+    "capacitance_f": null
+  },
+  "fields": {
+    "event_index": {
+      "unit": "1",
+      "definition": "0-based order of detected collapses. Used to plot conditioning."
+    },
+    "first_cycle": {
+      "unit": "bool",
+      "definition": "True when the preceding ramp is much flatter than the later population (startup / long plateau). Kept in the event table; excluded from typical stats."
+    },
+    "t_break": {
+      "unit": "s",
+      "definition": "Collapse-start time: first sample of the steepest ~20 ns drop. Event timestamp for all intervals; not the 1-sample voltage maximum."
+    },
+    "v_breakdown": {
+      "unit": "V",
+      "definition": "Median voltage over the ~20-50 ns plateau immediately before t_break. Repetitive breakdown voltage for that shot."
+    },
+    "v_undershoot": {
+      "unit": "V",
+      "definition": "Minimum in the ~200 ns after t_break. Includes inductive kick / probe ringing."
+    },
+    "v_residual": {
+      "unit": "V",
+      "definition": "Median voltage after ringing settles (~1-5 us post-edge), at the start of the next charging ramp. Recovery / restart voltage for the next cycle."
+    },
+    "dv_collapse": {
+      "unit": "V",
+      "definition": "v_breakdown - v_undershoot. Total observed swing including undershoot."
+    },
+    "period_s": {
+      "unit": "s",
+      "definition": "t_break[i] - t_break[i-1]. Undefined for event 0."
+    },
+    "rep_rate_hz": {
+      "unit": "Hz",
+      "definition": "1 / period_s for that interval."
+    },
+    "v10": {
+      "unit": "V",
+      "definition": "v_pre - 0.1 * (v_pre - v_post). 10% collapse level."
+    },
+    "v90": {
+      "unit": "V",
+      "definition": "v_pre - 0.9 * (v_pre - v_post). 90% collapse level."
+    },
+    "t10": {
+      "unit": "s",
+      "definition": "Absolute time of the first 10% crossing on the falling edge."
+    },
+    "t90": {
+      "unit": "s",
+      "definition": "Absolute time of the first 90% crossing on the falling edge."
+    },
+    "t_collapse_10_90": {
+      "unit": "s",
+      "definition": "t90 - t10. IEC/scope 10-90% fall time of the discharge edge."
+    },
+    "slew_collapse_mean": {
+      "unit": "V/s",
+      "definition": "0.8 * (v_pre - v_post) / t_collapse_10_90. Mean collapse gradient; a lower bound set by scope bandwidth."
+    },
+    "slew_collapse_peak": {
+      "unit": "V/s",
+      "definition": "Maximum |dV/dt| over a 5 ns window on the falling edge."
+    },
+    "t_ring": {
+      "unit": "s",
+      "definition": "Dominant post-collapse ring period in the 50-400 ns window (median peak spacing of the residual after a short moving mean)."
+    },
+    "charge_rate": {
+      "unit": "V/s",
+      "definition": "Least-squares slope of the linear charging ramp from residual settle to ~100 ns before t_break. I \u2248 C * charge_rate if C is known."
+    },
+    "charge_intercept": {
+      "unit": "V",
+      "definition": "Intercept of V = a + b t on the charging-ramp fit (for overlays)."
+    },
+    "charge_r2": {
+      "unit": "1",
+      "definition": "Coefficient of determination of the linear ramp fit. Low R\u00b2 flags a non-linear ramp."
+    },
+    "v_charge_start": {
+      "unit": "V",
+      "definition": "Voltage at the start of the ramp-fit window."
+    },
+    "v_charge_end": {
+      "unit": "V",
+      "definition": "Voltage at the end of the ramp-fit window (near v_breakdown)."
+    },
+    "recovery_s": {
+      "unit": "s",
+      "definition": "Time from t_break until a short local slope matches the next-cycle charge rate. Duration of the post-spark transient."
+    },
+    "energy_j": {
+      "unit": "J",
+      "definition": "0.5 * C * v_breakdown^2. Only when --capacitance is given."
+    },
+    "charge_c": {
+      "unit": "C",
+      "definition": "C * (v_breakdown - v_residual). Only when --capacitance is given."
+    },
+    "source_current_a": {
+      "unit": "A",
+      "definition": "C * charge_rate during the linear ramp. Only when --capacitance is given."
+    },
+    "L_est_h": {
+      "unit": "H",
+      "definition": "1 / ((2\u03c0 / t_ring)^2 * C) if t_ring and C are known."
+    }
+  },
+  "events": [
+    {
+      "event_index": 0,
+      "first_cycle": true,
+      "t_break": -0.0016488822,
+      "v_breakdown": 5664.2586,
+      "v_undershoot": -269.7266,
+      "v_residual": -539.4532,
+      "dv_collapse": 5933.9852,
+      "period_s": null,
+      "rep_rate_hz": null,
+      "t_collapse_10_90": 1.1999999999972102e-08,
+      "slew_collapse_mean": 395599013334.25305,
+      "slew_collapse_peak": 539453200000.0,
+      "t_ring": 1.2000000000080523e-08,
+      "charge_rate": 2668151.699528882,
+      "charge_r2": 0.9860432669500389,
+      "v_charge_start": 2966.9926,
+      "v_charge_end": 5664.2586,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 1,
+      "first_cycle": false,
+      "t_break": -0.0006588661999999998,
+      "v_breakdown": 6473.438400000001,
+      "v_undershoot": -809.1798000000001,
+      "v_residual": -809.1798000000001,
+      "dv_collapse": 7282.618200000001,
+      "period_s": 0.0009900160000000002,
+      "rep_rate_hz": 1010.084685500032,
+      "t_collapse_10_90": 1.6000000000251924e-08,
+      "slew_collapse_mean": 364130909994.2668,
+      "slew_collapse_peak": 647343840000.0,
+      "t_ring": 9.000000000033287e-09,
+      "charge_rate": 5009271.593079373,
+      "charge_r2": 0.6296253426083913,
+      "v_charge_start": -1078.9064,
+      "v_charge_end": 6203.7118,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 2,
+      "first_cycle": false,
+      "t_break": -5.199999999604826e-09,
+      "v_breakdown": 7282.618200000001,
+      "v_undershoot": -1078.9064,
+      "v_residual": -809.1798000000001,
+      "dv_collapse": 8361.5246,
+      "period_s": 0.0006588610000000002,
+      "rep_rate_hz": 1517.7708196417752,
+      "t_collapse_10_90": 8.000000000125962e-09,
+      "slew_collapse_mean": 836152459986.8347,
+      "slew_collapse_peak": 755234480000.0001,
+      "t_ring": 1.0500000000327955e-08,
+      "charge_rate": 8723201.18139635,
+      "charge_r2": 0.6456452928072809,
+      "v_charge_start": -1078.9064,
+      "v_charge_end": 7552.344800000001,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 3,
+      "first_cycle": false,
+      "t_break": 0.0006374928000000002,
+      "v_breakdown": 5933.9852,
+      "v_undershoot": -539.4532,
+      "v_residual": -539.4532,
+      "dv_collapse": 6473.4384,
+      "period_s": 0.0006374979999999998,
+      "rep_rate_hz": 1568.6323721799918,
+      "t_collapse_10_90": 1.4000000000003593e-08,
+      "slew_collapse_mean": 369910765714.1908,
+      "slew_collapse_peak": 647343840000.0,
+      "t_ring": 9.999999999940612e-09,
+      "charge_rate": 5684609.978615682,
+      "charge_r2": 0.3974598549313335,
+      "v_charge_start": -1078.9064,
+      "v_charge_end": 5933.9852,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 4,
+      "first_cycle": false,
+      "t_break": 0.0008886178000000002,
+      "v_breakdown": 6473.438400000001,
+      "v_undershoot": -1078.9064,
+      "v_residual": -539.4532,
+      "dv_collapse": 7552.344800000001,
+      "period_s": 0.00025112500000000005,
+      "rep_rate_hz": 3982.0806371329013,
+      "t_collapse_10_90": 1.4999999999910918e-08,
+      "slew_collapse_mean": 402791722669.05884,
+      "slew_collapse_peak": 809179800000.0,
+      "t_ring": 9.000000000033287e-09,
+      "charge_rate": 27340484.955135494,
+      "charge_r2": 0.9946110282428379,
+      "v_charge_start": -809.1798000000001,
+      "v_charge_end": 6473.438400000001,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 5,
+      "first_cycle": true,
+      "t_break": 0.0019506128000000003,
+      "v_breakdown": 5394.532,
+      "v_undershoot": -539.4532,
+      "v_residual": -539.4532,
+      "dv_collapse": 5933.9852,
+      "period_s": 0.001061995,
+      "rep_rate_hz": 941.6240189454752,
+      "t_collapse_10_90": 1.3000000000096268e-08,
+      "slew_collapse_mean": 365168319997.2959,
+      "slew_collapse_peak": 431562560000.0,
+      "t_ring": 7.499999999955459e-09,
+      "charge_rate": 752853.5748522641,
+      "charge_r2": 0.024751103503981575,
+      "v_charge_start": -1078.9064,
+      "v_charge_end": 5394.532,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 6,
+      "first_cycle": false,
+      "t_break": 0.0021384238000000007,
+      "v_breakdown": 5664.2586,
+      "v_undershoot": -1618.3596000000002,
+      "v_residual": -539.4532,
+      "dv_collapse": 7282.618200000001,
+      "period_s": 0.0001878110000000004,
+      "rep_rate_hz": 5324.50175974782,
+      "t_collapse_10_90": 1.1000000000281618e-08,
+      "slew_collapse_mean": 529644959986.44037,
+      "slew_collapse_peak": 755234480000.0,
+      "t_ring": 9.999999999940612e-09,
+      "charge_rate": 29042887.85339378,
+      "charge_r2": 0.9910235204224012,
+      "v_charge_start": -539.4532,
+      "v_charge_end": 5664.2586,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    },
+    {
+      "event_index": 7,
+      "first_cycle": false,
+      "t_break": 0.0025678788000000003,
+      "v_breakdown": 6743.165000000001,
+      "v_undershoot": -1078.9064,
+      "v_residual": -809.1798000000001,
+      "dv_collapse": 7822.071400000001,
+      "period_s": 0.0004294549999999996,
+      "rep_rate_hz": 2328.532675134766,
+      "t_collapse_10_90": 1.3999999999569912e-08,
+      "slew_collapse_mean": 446975508585.16,
+      "slew_collapse_peak": 863125120000.0002,
+      "t_ring": 9.499999999770109e-09,
+      "charge_rate": 11642191.198435627,
+      "charge_r2": 0.5584707145424611,
+      "v_charge_start": -809.1798000000001,
+      "v_charge_end": 6743.165000000001,
+      "recovery_s": null,
+      "energy_j": null,
+      "charge_c": null,
+      "source_current_a": null,
+      "L_est_h": null
+    }
+  ],
+  "summary": {
+    "all": {
+      "v_breakdown": {
+        "n": 8,
+        "mean": 6203.711800000001,
+        "std": 644.7698980369888,
+        "median": 6203.711800000001,
+        "min": 5394.532,
+        "max": 7282.618200000001,
+        "p05": 5488.93631,
+        "p95": 7093.80958,
+        "cv": 0.10393292255081688
+      },
+      "v_residual": {
+        "n": 8,
+        "mean": -640.6006750000001,
+        "std": 139.59677782388363,
+        "median": -539.4532,
+        "min": -809.1798000000001,
+        "max": -539.4532,
+        "p05": -809.1798000000001,
+        "p95": -539.4532,
+        "cv": -0.21791543979232242
+      },
+      "v_undershoot": {
+        "n": 8,
+        "mean": -876.6114500000002,
+        "std": 426.4752007665863,
+        "median": -944.0431000000001,
+        "min": -1618.3596000000002,
+        "max": -269.7266,
+        "p05": -1429.5509800000002,
+        "p95": -364.1309100000002,
+        "cv": -0.4865042554105199
+      },
+      "dv_collapse": {
+        "n": 8,
+        "mean": 7080.32325,
+        "std": 885.8256137187003,
+        "median": 7282.618200000001,
+        "min": 5933.9852,
+        "max": 8361.5246,
+        "p05": 5933.9852,
+        "p95": 8172.71598,
+        "cv": 0.125110899946369
+      },
+      "period_s": {
+        "n": 7,
+        "mean": 0.0006023944285714286,
+        "std": 0.00033938217861277333,
+        "median": 0.0006374979999999998,
+        "min": 0.0001878110000000004,
+        "max": 0.001061995,
+        "p05": 0.0002068052000000003,
+        "p95": 0.0010404013000000001,
+        "cv": 0.5633886412555545
+      },
+      "charge_rate": {
+        "n": 8,
+        "mean": 11357956.504304681,
+        "std": 10926339.826757465,
+        "median": 7203905.580006016,
+        "min": 752853.5748522641,
+        "max": 29042887.85339378,
+        "p05": 1423207.9184890804,
+        "p95": 28447046.839003377,
+        "cv": 0.9619987382956051
+      },
+      "t_collapse_10_90": {
+        "n": 8,
+        "mean": 1.2875000000026537e-08,
+        "std": 2.5319388391965835e-09,
+        "median": 1.349999999983309e-08,
+        "min": 8.000000000125962e-09,
+        "max": 1.6000000000251924e-08,
+        "p05": 9.050000000180441e-09,
+        "p95": 1.5650000000132572e-08,
+        "cv": 0.19665544382068853
+      },
+      "slew_collapse_mean": {
+        "n": 8,
+        "mean": 463796707533.4375,
+        "std": 160408267172.54114,
+        "median": 399195368001.65594,
+        "min": 364130909994.2668,
+        "max": 836152459986.8347,
+        "p05": 364494003495.32697,
+        "p95": 728874834986.6965,
+        "cv": 0.3458590036691377
+      }
+    },
+    "typical": {
+      "v_breakdown": {
+        "n": 6,
+        "mean": 6428.483966666668,
+        "std": 576.3992860397999,
+        "median": 6473.438400000001,
+        "min": 5664.2586,
+        "max": 7282.618200000001,
+        "p05": 5731.69025,
+        "p95": 7147.754900000001,
+        "cv": 0.08966333104796986
+      },
+      "v_residual": {
+        "n": 6,
+        "mean": -674.3165,
+        "std": 147.73534317917296,
+        "median": -674.3165000000001,
+        "min": -809.1798000000001,
+        "max": -539.4532,
+        "p05": -809.1798000000001,
+        "p95": -539.4532,
+        "cv": -0.21908902300206648
+      },
+      "v_undershoot": {
+        "n": 6,
+        "mean": -1033.9519666666667,
+        "std": 358.5098442916494,
+        "median": -1078.9064,
+        "min": -1618.3596000000002,
+        "max": -539.4532,
+        "p05": -1483.4963000000002,
+        "p95": -606.88485,
+        "cv": -0.3467374267369894
+      },
+      "dv_collapse": {
+        "n": 6,
+        "mean": 7462.435933333334,
+        "std": 630.6451710906815,
+        "median": 7417.481500000001,
+        "min": 6473.4384,
+        "max": 8361.5246,
+        "p05": 6675.73335,
+        "p95": 8226.6613,
+        "cv": 0.08450929116506115
+      },
+      "period_s": {
+        "n": 6,
+        "mean": 0.0005257943333333334,
+        "std": 0.0002982091367343842,
+        "median": 0.0005334764999999997,
+        "min": 0.0001878110000000004,
+        "max": 0.0009900160000000002,
+        "p05": 0.0002036395000000003,
+        "p95": 0.0009072272500000002,
+        "cv": 0.5671592823069302
+      },
+      "charge_rate": {
+        "n": 6,
+        "mean": 14573774.460009387,
+        "std": 10822795.273252867,
+        "median": 10182696.189915989,
+        "min": 5009271.593079373,
+        "max": 29042887.85339378,
+        "p05": 5178106.189463451,
+        "p95": 28617287.128829207,
+        "cv": 0.742621295735758
+      },
+      "t_collapse_10_90": {
+        "n": 6,
+        "mean": 1.3000000000023987e-08,
+        "std": 2.966479394768018e-09,
+        "median": 1.3999999999786752e-08,
+        "min": 8.000000000125962e-09,
+        "max": 1.6000000000251924e-08,
+        "p05": 8.750000000164876e-09,
+        "p95": 1.5750000000166672e-08,
+        "cv": 0.2281907226740419
+      },
+      "slew_collapse_mean": {
+        "n": 6,
+        "mean": 491601054489.32526,
+        "std": 179498585320.97476,
+        "median": 424883615627.1094,
+        "min": 364130909994.2668,
+        "max": 836152459986.8347,
+        "p05": 365575873924.2478,
+        "p95": 759525584986.7361,
+        "cv": 0.36513059457823527
+      }
+    },
+    "v_bd_cv": 0.08966333104796986,
+    "recovery_ratio_mean": -0.10426527176527177,
+    "period_jitter_s": 0.0002982091367343842,
+    "period_jitter_frac": 0.5671592823069302,
+    "rep_rate_mean_hz": 1901.8843235916704,
+    "corr_vbd_period": 0.34315457033582336,
+    "corr_vbd_charge_rate": -0.3987565368643673,
+    "conditioning_slope": null,
+    "n_events": 8,
+    "n_typical": 6
+  }
+}
