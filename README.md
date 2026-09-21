@@ -8,6 +8,7 @@ analysis plus data.
 
 ```
 lib/                  Shared path helpers, waveform NPZ I/O, video sidecar I/O
+gui/                  Offline analysis GUI (Analysis branch; no instruments)
 instruments/          Hardware by role, then model
   lab.json            Which model is on the bench, plus IPs
   oscilloscope.py     Oscilloscope ABC
@@ -39,6 +40,18 @@ pip install -r requirements.txt
 
 Python 3.12+. Edit `instruments/lab.json` so the `oscilloscope` / `generator`
 roles match the hardware on the network.
+
+## Analysis GUI
+
+On the **Analysis** branch, an offline PySide6 app browses and (in later
+phases) analyzes captures under `Measurements/`. It does not import
+instrument drivers.
+
+```bash
+bash gui/run.sh
+```
+
+See [gui/README.md](gui/README.md). Measurement capture stays on **master**.
 
 ## Usage
 

@@ -1,0 +1,11 @@
+# Analysis GUI only. Do not add pyvisa / instrument drivers here — this venv
+# is meant to run on machines that never talk to the bench.
+#
+# PySide6 ships cp310-abi3 wheels, so one wheel covers Python 3.10 through 3.14.
+PySide6>=6.6,<7
+pyqtgraph>=0.13
+numpy
+matplotlib
+# Lets the Dock / Cmd-Tab label say "Dvorak" instead of "Python" when the GUI is
+# launched via run.sh (hosted by Python.app). Ignored on other platforms.
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
