@@ -27,10 +27,16 @@ folder…** points the catalogue at an external tree with the same layout;
 
 Right-click a capture to reveal it in Finder or copy its path.
 
+**Oscilloscope Trace Analysis** loads the NPZ on a background thread and plots
+it with min-max downsampling: zooming a 6 million-point capture does not draw
+every sample. Hover for t / V; enable **Cursors** for Δt. **View → Reset view**
+restores the full window. **File → Export plot…** writes a PNG of the current
+view (defaults to `Data/plots/`).
+
 Measurement tools are listed but disabled. They will ship later on lab
 computers (master branch, Windows).
 
 ## Notes
 
 - This venv must not install `pyvisa` or import `instruments`.
-- Trace plotting and spark-gap analysis arrive in later phases.
+- Spark-gap detection and figure packs arrive in later phases.

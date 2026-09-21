@@ -76,6 +76,22 @@ class AnalysisWindow(QMainWindow):
         self._browser.capture_selected.connect(self._on_capture_selected)
         self._browser.capture_chosen.connect(self._on_capture_chosen)
 
+        splitter = QSplitter()
+        splitter.addWidget(self._browser)
+        panes = self._workspace_panes()
+        for pane in panes:
+            splitter.addWidget(pane)
+        splitter.setStretchFactor(0, 1)
+        for index in range(1, splitter.count()):
+            splitter.setStretchFactor(index, 2 if index == 1 else 1)
+        if splitter.count() == 2:
+            splitter.setSizes([420, 760])
+        else:
+            splitter.setSizes([360, 760, 280])
+        self.setCentralWidget(splitter)
+        self.statusBar().showMessage("Select a capture")
+
+    def _workspace_panes(self) -> list[QWidget]:
         heading = QLabel(self._spec.title)
         heading_font = QFont()
         heading_font.setPointSize(16)
@@ -94,15 +110,7 @@ class AnalysisWindow(QMainWindow):
         right_layout.addWidget(heading)
         right_layout.addWidget(self._hint)
         right_layout.addWidget(self._detail, stretch=1)
-
-        splitter = QSplitter()
-        splitter.addWidget(self._browser)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([420, 760])
-        self.setCentralWidget(splitter)
-        self.statusBar().showMessage("Select a capture")
+        return [right]
 
     def _refresh_catalogue(self) -> None:
         self._browser.refresh()
@@ -127,6 +135,9 @@ class AnalysisWindow(QMainWindow):
             return
         self._chosen = record
         self._on_capture_selected(record)
+        self._handle_opened(record)
+
+    def _handle_opened(self, record: CaptureRecord) -> None:
         self.statusBar().showMessage(f"Opened {record.stem}")
 
     def _is_accepted(self, record: CaptureRecord) -> bool:
@@ -155,9 +166,6 @@ def _format_record(record: CaptureRecord, *, accepted: bool) -> str:
     if not accepted:
         lines.append("")
         lines.append("This analysis cannot open this capture kind.")
-    else:
-        lines.append("")
-        lines.append("Plotting and analysis land in a later phase.")
     preview = _metadata_preview(record.metadata)
     if preview:
         lines.append("")

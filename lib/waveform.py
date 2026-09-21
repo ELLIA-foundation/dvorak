@@ -124,22 +124,35 @@ def save_waveform(
     return paths
 
 
-def pick_time_scale(time_s: np.ndarray) -> tuple[np.ndarray, str]:
-    span = float(np.max(time_s) - np.min(time_s))
+def time_scale_factor(span_s: float) -> tuple[float, str]:
+    """Return ``(multiply_by, unit)`` for a time span in seconds."""
+    span = abs(float(span_s))
     if span < 1e-6:
-        return time_s * 1e9, "ns"
+        return 1e9, "ns"
     if span < 1e-3:
-        return time_s * 1e6, "µs"
+        return 1e6, "µs"
     if span < 1:
-        return time_s * 1e3, "ms"
-    return time_s, "s"
+        return 1e3, "ms"
+    return 1.0, "s"
+
+
+def voltage_scale_factor(peak_v: float) -> tuple[float, str]:
+    """Return ``(multiply_by, unit)`` for a voltage peak in volts."""
+    if abs(float(peak_v)) >= 1000:
+        return 1e-3, "kV"
+    return 1.0, "V"
+
+
+def pick_time_scale(time_s: np.ndarray) -> tuple[np.ndarray, str]:
+    span = float(np.max(time_s) - np.min(time_s)) if len(time_s) else 0.0
+    factor, unit = time_scale_factor(span)
+    return time_s * factor, unit
 
 
 def pick_voltage_scale(voltage_v: np.ndarray) -> tuple[np.ndarray, str]:
     peak = float(np.max(np.abs(voltage_v))) if len(voltage_v) else 0.0
-    if peak >= 1000:
-        return voltage_v / 1000.0, "kV"
-    return voltage_v, "V"
+    factor, unit = voltage_scale_factor(peak)
+    return voltage_v * factor, unit
 
 
 def decimate_minmax(
@@ -147,28 +160,45 @@ def decimate_minmax(
     voltage_v: np.ndarray,
     max_points: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Reduce points for plotting while preserving local min/max."""
+    """Reduce points for plotting while preserving local min/max.
+
+    Each bucket contributes two samples (the extreme voltages, in time order)
+    so peaks survive even when ``max_points`` is far below ``len(time_s)``.
+    """
     n = len(time_s)
     if n <= max_points:
         return time_s, voltage_v
+    if max_points < 2:
+        max_points = 2
 
-    bucket_count = max_points // 2
+    bucket_count = max(1, max_points // 2)
     bucket_size = int(np.ceil(n / bucket_count))
-    t_out: list[float] = []
-    v_out: list[float] = []
+    n_buckets = int(np.ceil(n / bucket_size))
+    padded = n_buckets * bucket_size
 
-    for start in range(0, n, bucket_size):
-        stop = min(start + bucket_size, n)
-        t_bucket = time_s[start:stop]
-        v_bucket = voltage_v[start:stop]
-        min_idx = int(np.argmin(v_bucket))
-        max_idx = int(np.argmax(v_bucket))
-        order = (min_idx, max_idx) if min_idx <= max_idx else (max_idx, min_idx)
-        for idx in order:
-            t_out.append(float(t_bucket[idx]))
-            v_out.append(float(v_bucket[idx]))
+    t_pad = np.empty(padded, dtype=np.float64)
+    v_pad = np.empty(padded, dtype=np.float64)
+    t_pad[:n] = time_s
+    v_pad[:n] = voltage_v
+    if padded > n:
+        t_pad[n:] = np.nan
+        v_pad[n:] = np.nan
 
-    return np.asarray(t_out), np.asarray(v_out)
+    t_b = t_pad.reshape(n_buckets, bucket_size)
+    v_b = v_pad.reshape(n_buckets, bucket_size)
+    min_idx = np.nanargmin(v_b, axis=1)
+    max_idx = np.nanargmax(v_b, axis=1)
+    first = np.minimum(min_idx, max_idx)
+    second = np.maximum(min_idx, max_idx)
+    rows = np.arange(n_buckets)
+
+    t_out = np.empty(n_buckets * 2, dtype=np.float64)
+    v_out = np.empty(n_buckets * 2, dtype=np.float64)
+    t_out[0::2] = t_b[rows, first]
+    t_out[1::2] = t_b[rows, second]
+    v_out[0::2] = v_b[rows, first]
+    v_out[1::2] = v_b[rows, second]
+    return t_out, v_out
 
 
 def plot_waveform(
