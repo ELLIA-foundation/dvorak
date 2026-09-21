@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -63,14 +64,32 @@ def latest_capture(directory: Path) -> Path | None:
     return files[-1] if files else None
 
 
+def waveform_stem(
+    channel: int,
+    run_name: str | None = None,
+    *,
+    stamp: str | None = None,
+) -> str:
+    """Build ``waveform_<slug>_<timestamp>_ch<N>`` or ``waveform_<timestamp>_ch<N>``."""
+    if stamp is None:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if run_name is None or not str(run_name).strip():
+        return f"waveform_{stamp}_ch{channel}"
+    slug = re.sub(r"[^\w\-]+", "_", str(run_name).strip()).strip("_")
+    if not slug:
+        return f"waveform_{stamp}_ch{channel}"
+    return f"waveform_{slug}_{stamp}_ch{channel}"
+
+
 def save_waveform(
     capture: WaveformCapture,
     output_dir: Path,
     write_csv: bool = False,
+    run_name: str | None = None,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem = f"waveform_{stamp}_ch{capture.channel}"
+    stem = waveform_stem(capture.channel, run_name, stamp=stamp)
 
     npz_path = output_dir / f"{stem}.npz"
     json_path = output_dir / f"{stem}.json"
@@ -80,8 +99,11 @@ def save_waveform(
         time_s=capture.time_s,
         voltage_v=capture.voltage_v,
     )
+    metadata = capture.metadata_dict()
+    if run_name is not None and str(run_name).strip():
+        metadata["run_name"] = str(run_name).strip()
     json_path.write_text(
-        json.dumps(capture.metadata_dict(), indent=2),
+        json.dumps(metadata, indent=2),
         encoding="utf-8",
     )
 

@@ -84,7 +84,7 @@ DEFAULT_CAPACITANCE_F = None
 # Also write a raw waveform CSV (can be large for deep-memory captures).
 DEFAULT_WRITE_CSV = False
 
-# Label stored in the analysis summary. None = omit.
+# Label for capture filenames and the analysis summary. None = timestamp-only stem.
 DEFAULT_RUN_NAME = "test3"
 
 # RAW slice: "screen" = 12-div window (verified against the scope), "full" = all memory.
@@ -615,6 +615,7 @@ def acquire_waveform(
     write_csv: bool,
     output_dir: Path,
     window: str = DEFAULT_WINDOW,
+    run_name: str | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Download the stopped waveform, save NPZ+JSON, then close the scope."""
     scope = open_oscilloscope(scope_model)
@@ -623,7 +624,7 @@ def acquire_waveform(
         print(f"Connected: {idn}")
         print(f"Model:     {scope.model_id}")
         capture = scope.capture_channel(channel=channel, chunk_size=chunk_size, window=window)
-        paths = save_waveform(capture, output_dir, write_csv=write_csv)
+        paths = save_waveform(capture, output_dir, write_csv=write_csv, run_name=run_name)
         _print_capture_info(capture, paths)
         run = {
             "mode": "acquire",
@@ -633,6 +634,7 @@ def acquire_waveform(
             "chunk_size": chunk_size,
             "write_csv": write_csv,
             "window": window,
+            "run_name": run_name,
         }
         return paths["npz"], run
     except VisaIOError as exc:
@@ -757,7 +759,7 @@ def main() -> None:
         "--name",
         type=str,
         default=DEFAULT_RUN_NAME,
-        help="Run label stored in the analysis summary (default: omit)",
+        help="Run label for capture filenames and analysis summary (default: omit)",
     )
     parser.add_argument(
         "--window",
@@ -787,8 +789,8 @@ def main() -> None:
             write_csv=args.csv,
             output_dir=data_dir,
             window=args.window,
+            run_name=run_name,
         )
-        run["run_name"] = run_name
 
     run.update(
         {
