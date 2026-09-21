@@ -5,9 +5,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
 from . import APP_NAME
+from .catalog import default_data_root
 from .macos_identity import configure as configure_macos_identity
 from .registry import get
 from .window import AnalysisWindow
@@ -24,12 +26,31 @@ def _ensure_repo_on_path() -> None:
         sys.path.insert(0, root_s)
 
 
-class AppController:
-    """Owns the launcher and any analysis windows so Qt does not garbage-collect them."""
+class AppController(QObject):
+    """Owns the launcher, analysis windows, and the shared data root."""
 
-    def __init__(self) -> None:
+    data_root_changed = Signal()
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self._launcher: QWidget | None = None
         self._windows: list[QWidget] = []
+        self._data_root: Path | None = None
+
+    def resolved_data_root(self) -> Path:
+        if self._data_root is not None:
+            return self._data_root
+        return default_data_root()
+
+    def uses_external_root(self) -> bool:
+        return self._data_root is not None
+
+    def set_data_root(self, path: Path | None) -> None:
+        resolved = path.resolve() if path is not None else None
+        if resolved == self._data_root:
+            return
+        self._data_root = resolved
+        self.data_root_changed.emit()
 
     def show_launcher(self) -> QWidget:
         from .launcher import LauncherWindow
@@ -91,7 +112,6 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(True)
 
     controller = AppController()
-    # Python attribute (not setProperty): keep the controller alive for the loop.
     app._dvorak_controller = controller
     controller.show_launcher()
     return app.exec()
