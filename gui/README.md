@@ -35,8 +35,12 @@ view (defaults to `Data/plots/`).
 
 **Spark Gap Analysis** uses the same plot. Set detection parameters, then
 **Detect events**. Markers match the CLI overview (orange typical, red
-first-cycle). **File → Save/Load recipe…** stores the parameter set as JSON.
-The full figure pack is a later phase.
+first-cycle). **Run full analysis** writes the same
+`Data/plots/analysis_<stem>/` pack as the campaign CLI (events CSV, summary
+JSON, METRICS.md, figures 01–08, `analysis.pdf`) without importing the
+acquisition script. Tabs: **Overview** | **Figures 02–08** | **Events** |
+**Summary**. **Reveal folder** / **Open PDF** (also under File) open the
+output. **File → Save/Load recipe…** stores the parameter set as JSON.
 
 Measurement tools are listed but disabled. They will ship later on lab
 computers (master branch, Windows).
@@ -44,4 +48,3 @@ computers (master branch, Windows).
 ## Notes
 
 - This venv must not install `pyvisa` or import `instruments`.
-- The spark-gap figure pack (CSV / JSON / 8 plots) arrives in a later phase.

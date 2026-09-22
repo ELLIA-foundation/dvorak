@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 DEFAULT_MAX_POINTS = 20_000
@@ -207,6 +206,8 @@ def plot_waveform(
     output_path: Path | None = None,
     show: bool = True,
 ) -> Path | None:
+    import matplotlib.pyplot as plt
+
     time_s, voltage_v, metadata = load_waveform(npz_path)
 
     plot_t, plot_v = decimate_minmax(time_s, voltage_v, max_points)
