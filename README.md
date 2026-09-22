@@ -43,12 +43,12 @@ roles match the hardware on the network.
 
 ## Analysis GUI
 
-On the **Analysis** branch, an offline PySide6 app browses and (in later
-phases) analyzes captures under `Measurements/`. It does not import
-instrument drivers.
+On the **Analysis** branch, an offline PySide6 app browses and analyzes
+captures under `Measurements/`. It does not import instrument drivers.
 
 ```bash
 bash gui/run.sh
+python tools/sync_measurements.py   # new lab data from origin/master
 ```
 
 See [gui/README.md](gui/README.md). Measurement capture stays on **master**.

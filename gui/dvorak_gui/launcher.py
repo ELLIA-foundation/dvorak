@@ -31,8 +31,9 @@ if TYPE_CHECKING:
     from .app import AppController
 
 _MEASUREMENT_HINT = (
-    "Coming later. The Measurement GUI will run on lab computers "
-    "(Windows) on the master branch."
+    "Coming later on lab computers (Windows, master branch): "
+    "instrument connect plus the existing campaign / tools CLIs, "
+    "writing Measurements/."
 )
 
 
@@ -101,7 +102,7 @@ class LauncherWindow(QMainWindow):
         self._controller = controller
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(APP_NAME)
-        self.resize(560, 520)
+        self.resize(560, 640)
         self._build_menu()
         self._build_body()
 

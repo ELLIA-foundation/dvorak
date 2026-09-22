@@ -4,4 +4,4 @@ from __future__ import annotations
 
 
 def load_plugins() -> None:
-    from . import measurement, spark_gap, trace  # noqa: F401
+    from . import camera_clip, frequency_response, measurement, spark_gap, trace  # noqa: F401
