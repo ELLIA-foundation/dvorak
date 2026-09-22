@@ -33,10 +33,15 @@ every sample. Hover for t / V; enable **Cursors** for Δt. **View → Reset view
 restores the full window. **File → Export plot…** writes a PNG of the current
 view (defaults to `Data/plots/`).
 
+**Spark Gap Analysis** uses the same plot. Set detection parameters, then
+**Detect events**. Markers match the CLI overview (orange typical, red
+first-cycle). **File → Save/Load recipe…** stores the parameter set as JSON.
+The full figure pack is a later phase.
+
 Measurement tools are listed but disabled. They will ship later on lab
 computers (master branch, Windows).
 
 ## Notes
 
 - This venv must not install `pyvisa` or import `instruments`.
-- Spark-gap detection and figure packs arrive in later phases.
+- The spark-gap figure pack (CSV / JSON / 8 plots) arrives in a later phase.

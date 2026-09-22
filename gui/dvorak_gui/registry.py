@@ -18,7 +18,7 @@ WindowFactory = Callable[[Any], Any]
 
 @dataclass(frozen=True)
 class Option:
-    """Schema entry for a parameter form. Unused until Phase 3."""
+    """Schema entry for a parameter form."""
 
     key: str
     type: str
@@ -27,6 +27,7 @@ class Option:
     help: str = ""
     unit: str = ""
     choices: tuple[str, ...] = ()
+    optional: bool = False
 
 
 @dataclass

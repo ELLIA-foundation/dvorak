@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pyqtgraph as pg
@@ -28,6 +29,18 @@ _LOD_DEBOUNCE_MS = 40
 _CURSOR_A = "#d62728"
 _CURSOR_B = "#2ca02c"
 _TRACE_PEN = pg.mkPen("#1f77b4", width=1)
+_EVENT_TYPICAL = "#ff7f0e"
+_EVENT_FIRST = "#d62728"
+
+
+@dataclass(frozen=True)
+class EventMark:
+    """Breakdown marker drawn on the overview (SI seconds / volts)."""
+
+    t_break: float
+    v_breakdown: float
+    first_cycle: bool = False
+    event_index: int = 0
 
 
 def format_seconds(value_s: float) -> str:
@@ -65,6 +78,7 @@ class TracePlot(QWidget):
         self._volt_unit = "V"
         self._shown = 0
         self._updating = False
+        self._event_items: list[Any] = []
         self._lod_timer = QTimer(self)
         self._lod_timer.setSingleShot(True)
         self._lod_timer.setInterval(_LOD_DEBOUNCE_MS)
@@ -72,6 +86,7 @@ class TracePlot(QWidget):
         self._build()
 
     def set_waveform(self, time_s: np.ndarray, voltage_v: np.ndarray) -> None:
+        self.clear_events()
         self._time_s = np.asarray(time_s, dtype=np.float64)
         self._voltage_v = np.asarray(voltage_v, dtype=np.float64)
         peak = float(np.max(np.abs(self._voltage_v))) if len(self._voltage_v) else 0.0
@@ -93,11 +108,54 @@ class TracePlot(QWidget):
         self._update_time_label()
 
     def clear_waveform(self) -> None:
+        self.clear_events()
         self._time_s = None
         self._voltage_v = None
         self._curve.setData([], [])
         self._hover.setText("Open a waveform to plot.")
         self.status_changed.emit("")
+
+    def clear_events(self) -> None:
+        for item in self._event_items:
+            self._plot.removeItem(item)
+        self._event_items = []
+
+    def set_events(self, events: Sequence[EventMark]) -> None:
+        """Overlay t_break / v_breakdown like the spark-gap overview figure."""
+        self.clear_events()
+        if not events:
+            return
+        spots = []
+        for event in events:
+            color = _EVENT_FIRST if event.first_cycle else _EVENT_TYPICAL
+            y = event.v_breakdown * self._v_scale
+            spots.append({"pos": (event.t_break, y), "brush": color, "pen": color})
+            line = pg.InfiniteLine(
+                pos=event.t_break,
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(color, width=1),
+            )
+            line.setOpacity(0.35)
+            line.setZValue(-5)
+            self._plot.addItem(line)
+            self._event_items.append(line)
+            label = pg.TextItem(
+                f"{event.event_index}:{event.v_breakdown / 1000.0:.1f} kV",
+                color=color,
+                anchor=(0, 1),
+            )
+            label.setPos(event.t_break, y)
+            self._plot.addItem(label)
+            self._event_items.append(label)
+        scatter = pg.ScatterPlotItem(
+            spots=spots,
+            size=8,
+            hoverable=False,
+        )
+        scatter.setZValue(5)
+        self._plot.addItem(scatter)
+        self._event_items.append(scatter)
 
     def reset_view(self) -> None:
         if self._time_s is None or len(self._time_s) == 0:
