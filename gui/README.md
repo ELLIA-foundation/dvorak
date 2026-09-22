@@ -47,15 +47,21 @@ gitignored. The script refuses to run if those paths have local changes.
 **Oscilloscope Trace Analysis** loads the NPZ on a background thread and plots
 it with min-max downsampling. Hover for t / V; **Cursors** for Δt.
 **View → Reset view** restores the full window. **File → Export plot…** writes
-a PNG of the current view (defaults to `Data/plots/`).
+a PNG of the current view (defaults to `Data/plots/`). **Legacy ROOT** and
+**Save PDF…** send that same decimated view to ROOT; the live plot stays in
+Qt so zooming a multi-million-point trace stays responsive.
 
 **Spark Gap Analysis** uses the same plot. **Detect events** marks breakdowns
 (orange typical, red first-cycle). **Run full analysis** writes
 `Data/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08,
-`analysis.pdf`). Tabs: Overview | Figures 02–08 | Events | Summary.
+`analysis.pdf`, and `root_figures.json`). Tabs: Overview | Figures 02–08 |
+Events | Summary. Figures 02–08 open in JSROOT when ROOT is installed, with
+**Legacy ROOT** for the selected figure. Without ROOT the tab stays on the
+PNGs.
 
-**Frequency response** and **Camera clip** are listed but disabled — the
-catalogue already indexes those kinds; viewers come later.
+**Frequency response** plots a sweep (dB ratio and Vpp, log frequency) as a
+ROOT canvas with the same Legacy ROOT button. **Camera clip** is listed but
+disabled — the catalogue already indexes videos; a viewer comes later.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,

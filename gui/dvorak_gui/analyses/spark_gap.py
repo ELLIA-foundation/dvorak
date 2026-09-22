@@ -31,8 +31,10 @@ from ..campaign_import import load_campaign_module
 from ..catalog import CaptureRecord
 from ..kinds import KIND_WAVEFORM
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, Option, get, register
-from ..widgets.figure_gallery import FigureGallery, open_local_path, reveal_in_folder
+from ..rootexport import open_in_legacy_root, save_pdf
+from ..widgets.figure_gallery import open_local_path, reveal_in_folder
 from ..widgets.param_form import ParamForm
+from ..widgets.root_gallery import RootGallery
 from ..widgets.trace_plot import EventMark, TracePlot, format_seconds
 from ..window import AnalysisWindow
 from ..workers import WorkerHandle
@@ -205,6 +207,20 @@ def _marks_from_rows(rows: list[dict[str, Any]]) -> list[EventMark]:
     return marks
 
 
+def _root_specs(out_dir: Path) -> list[dict[str, Any]]:
+    path = out_dir / "root_figures.json"
+    if not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    figures = payload.get("figures") if isinstance(payload, dict) else None
+    if not isinstance(figures, list):
+        return []
+    return [item for item in figures if isinstance(item, dict)]
+
+
 def _gallery_items(out_dir: Path) -> list[tuple[str, Path]]:
     items: list[tuple[str, Path]] = []
     for stem in FIGURE_GALLERY_STEMS:
@@ -334,10 +350,11 @@ class SparkGapWindow(AnalysisWindow):
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._plot: TracePlot | None = None
         self._form: ParamForm | None = None
-        self._gallery: FigureGallery | None = None
+        self._gallery: RootGallery | None = None
         self._load_worker = WorkerHandle()
         self._detect_worker = WorkerHandle()
         self._analysis_worker = WorkerHandle()
+        self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._time_s = None
         self._voltage_v = None
@@ -428,8 +445,10 @@ class SparkGapWindow(AnalysisWindow):
 
         self._plot = TracePlot()
         self._plot.status_changed.connect(self._on_plot_status)
+        self._plot.legacy_root_requested.connect(self._open_legacy_root)
+        self._plot.pdf_requested.connect(self._export_pdf)
 
-        self._gallery = FigureGallery()
+        self._gallery = RootGallery(self._controller.root)
         self._events_table = QTableWidget(0, len(_sg.CSV_COLUMNS))
         self._events_table.setHorizontalHeaderLabels(
             [_column_header(name) for name in _sg.CSV_COLUMNS]
@@ -663,7 +682,7 @@ class SparkGapWindow(AnalysisWindow):
         self._fill_preview_table(marks)
         self._fill_events_table(events)
         if self._gallery is not None:
-            self._gallery.set_figures(_gallery_items(out_dir))
+            self._gallery.set_content(_root_specs(out_dir), _gallery_items(out_dir))
         self._summary.setPlainText(_format_summary(payload, out_dir))
         self._count_label.setText(f"{n_events} breakdowns ({n_typical} typical)")
         if switch_tab and self._gallery is not None and self._gallery.count():
@@ -749,6 +768,47 @@ class SparkGapWindow(AnalysisWindow):
         if self._plot is not None:
             self._plot.reset_view()
 
+    def _overview_spec(self):
+        if self._plot is None:
+            return None
+        name = "01_overview"
+        if self._chosen is not None:
+            name = f"01_overview_{self._chosen.stem}"
+        return self._plot.publication_spec(name)
+
+    def _open_legacy_root(self) -> None:
+        spec = self._overview_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        open_in_legacy_root(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            on_status=self.statusBar().showMessage,
+        )
+
+    def _export_pdf(self) -> None:
+        spec = self._overview_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        if self._out_dir is not None:
+            default = self._out_dir / "01_overview.pdf"
+        elif self._chosen is not None:
+            default = self._chosen.path.parent / "plots" / f"{self._chosen.stem}.pdf"
+        else:
+            default = Path("01_overview.pdf")
+        save_pdf(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            default,
+            on_status=self.statusBar().showMessage,
+        )
+
     def _save_recipe(self) -> None:
         if self._form is None:
             return
@@ -791,6 +851,9 @@ class SparkGapWindow(AnalysisWindow):
         self._load_worker.cancel()
         self._detect_worker.cancel()
         self._analysis_worker.cancel()
+        self._export_worker.cancel()
+        if self._gallery is not None:
+            self._gallery.shutdown()
         super().closeEvent(event)
 
 

@@ -76,8 +76,19 @@ class FigureGallery(QWidget):
         self._image.clear()
         self._image.setText(self._empty)
 
+    def set_placeholder(self, text: str) -> None:
+        self._empty = text
+        if not self._items:
+            self._image.setText(text)
+
     def count(self) -> int:
         return len(self._items)
+
+    def current_item(self) -> tuple[str, Path] | None:
+        row = self._list.currentRow()
+        if row < 0 or row >= len(self._items):
+            return None
+        return self._items[row]
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

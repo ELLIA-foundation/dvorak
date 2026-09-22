@@ -69,6 +69,8 @@ class TracePlot(QWidget):
     """Plot ``time_s`` / ``voltage_v`` with viewport-aware min-max decimation."""
 
     status_changed = Signal(str)
+    legacy_root_requested = Signal()
+    pdf_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,6 +81,7 @@ class TracePlot(QWidget):
         self._shown = 0
         self._updating = False
         self._event_items: list[Any] = []
+        self._event_marks: list[EventMark] = []
         self._lod_timer = QTimer(self)
         self._lod_timer.setSingleShot(True)
         self._lod_timer.setInterval(_LOD_DEBOUNCE_MS)
@@ -106,6 +109,7 @@ class TracePlot(QWidget):
         self._place_cursors(t0 + 0.25 * span, t0 + 0.75 * span)
         self._rebuild_lod()
         self._update_time_label()
+        self._set_export_enabled(True)
 
     def clear_waveform(self) -> None:
         self.clear_events()
@@ -113,16 +117,19 @@ class TracePlot(QWidget):
         self._voltage_v = None
         self._curve.setData([], [])
         self._hover.setText("Open a waveform to plot.")
+        self._set_export_enabled(False)
         self.status_changed.emit("")
 
     def clear_events(self) -> None:
         for item in self._event_items:
             self._plot.removeItem(item)
         self._event_items = []
+        self._event_marks = []
 
     def set_events(self, events: Sequence[EventMark]) -> None:
         """Overlay t_break / v_breakdown like the spark-gap overview figure."""
         self.clear_events()
+        self._event_marks = list(events)
         if not events:
             return
         spots = []
@@ -190,6 +197,97 @@ class TracePlot(QWidget):
     def shown_points(self) -> int:
         return self._shown
 
+    def publication_spec(self, name: str = "trace") -> dict | None:
+        """Decimated current viewport, in the same units as the on-screen axes."""
+        if self._time_s is None or self._voltage_v is None or len(self._time_s) == 0:
+            return None
+        x0, x1 = self._vb.viewRange()[0]
+        if x1 < x0:
+            x0, x1 = x1, x0
+        i0 = int(np.searchsorted(self._time_s, x0, side="left"))
+        i1 = int(np.searchsorted(self._time_s, x1, side="right"))
+        i0 = max(0, i0 - 1)
+        i1 = min(len(self._time_s), max(i0 + 1, i1 + 1))
+        t_slice = self._time_s[i0:i1]
+        v_slice = self._voltage_v[i0:i1]
+        t_plot, v_plot = decimate_minmax(t_slice, v_slice, DEFAULT_LOD_POINTS)
+        mask = np.isfinite(t_plot) & np.isfinite(v_plot)
+        t_plot = t_plot[mask]
+        v_plot = v_plot[mask]
+        if len(t_plot) == 0:
+            return None
+        span = abs(float(x1) - float(x0))
+        factor, unit = time_scale_factor(span if span else 1.0)
+        y0, y1 = self._vb.viewRange()[1]
+        panel: dict = {
+            "x_title": f"Time ({unit})",
+            "y_title": f"Voltage ({self._volt_unit})",
+            "xmin": float(x0) * factor,
+            "xmax": float(x1) * factor,
+            "ymin": float(min(y0, y1)),
+            "ymax": float(max(y0, y1)),
+            "series": [
+                {
+                    "x": (t_plot * factor).astype(float).tolist(),
+                    "y": (v_plot * self._v_scale).astype(float).tolist(),
+                    "label": "",
+                    "color": "#1f77b4",
+                    "line": "solid",
+                    "marker": "none",
+                    "width": 2,
+                }
+            ],
+            "hlines": [{"y": 0.0, "color": "#888888", "style": "dashed"}],
+            "vlines": [],
+            "points": [],
+            "legend": False,
+        }
+        if self._cursors.isChecked():
+            panel["vlines"].extend(
+                [
+                    {
+                        "x": float(self._cursor_a.value()) * factor,
+                        "color": _CURSOR_A,
+                        "label": "A",
+                        "style": "solid",
+                    },
+                    {
+                        "x": float(self._cursor_b.value()) * factor,
+                        "color": _CURSOR_B,
+                        "label": "B",
+                        "style": "solid",
+                    },
+                ]
+            )
+        for event in self._event_marks:
+            if event.t_break < x0 or event.t_break > x1:
+                continue
+            color = _EVENT_FIRST if event.first_cycle else _EVENT_TYPICAL
+            x = event.t_break * factor
+            y = event.v_breakdown * self._v_scale
+            panel["vlines"].append(
+                {"x": x, "color": color, "style": "dashed", "label": ""}
+            )
+            panel["points"].append(
+                {
+                    "x": x,
+                    "y": y,
+                    "color": color,
+                    "label": f"{event.event_index}:{event.v_breakdown / 1000.0:.1f} kV",
+                }
+            )
+        return {
+            "name": name,
+            "width": 960,
+            "height": 520,
+            "cols": 1,
+            "panels": [panel],
+        }
+
+    def _set_export_enabled(self, enabled: bool) -> None:
+        self._legacy_btn.setEnabled(enabled)
+        self._pdf_btn.setEnabled(enabled)
+
     def _build(self) -> None:
         pg.setConfigOptions(antialias=False, foreground="d")
         self._plot = pg.PlotWidget(
@@ -240,9 +338,20 @@ class TracePlot(QWidget):
         reset_btn.clicked.connect(self.reset_view)
         self._cursors = QCheckBox("Cursors")
         self._cursors.toggled.connect(self._toggle_cursors)
+        self._legacy_btn = QPushButton("Legacy ROOT")
+        self._legacy_btn.setToolTip(
+            "Open the current view in the interactive ROOT GUI (root -l)"
+        )
+        self._legacy_btn.clicked.connect(self.legacy_root_requested.emit)
+        self._pdf_btn = QPushButton("Save PDF…")
+        self._pdf_btn.setToolTip("Write the current view as a ROOT PDF")
+        self._pdf_btn.clicked.connect(self.pdf_requested.emit)
+        self._set_export_enabled(False)
         toolbar = QHBoxLayout()
         toolbar.addWidget(self._hover, stretch=1)
         toolbar.addWidget(self._cursors)
+        toolbar.addWidget(self._legacy_btn)
+        toolbar.addWidget(self._pdf_btn)
         toolbar.addWidget(reset_btn)
 
         layout = QVBoxLayout(self)

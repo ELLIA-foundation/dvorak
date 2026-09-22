@@ -12,6 +12,7 @@ from . import APP_NAME
 from .catalog import default_data_root
 from .macos_identity import configure as configure_macos_identity
 from .registry import get
+from .rootbridge import RootBridge
 from .window import AnalysisWindow
 
 
@@ -36,6 +37,7 @@ class AppController(QObject):
         self._launcher: QWidget | None = None
         self._windows: list[QWidget] = []
         self._data_root: Path | None = None
+        self.root = RootBridge(self)
 
     def resolved_data_root(self) -> Path:
         if self._data_root is not None:
@@ -84,6 +86,9 @@ class AppController(QObject):
         if app is not None:
             app.quit()
 
+    def shutdown(self) -> None:
+        self.root.close()
+
     def _track(self, window: QWidget) -> None:
         self._windows.append(window)
         window.destroyed.connect(lambda *_args, w=window: self._forget(w))
@@ -113,5 +118,6 @@ def main(argv: list[str] | None = None) -> int:
 
     controller = AppController()
     app._dvorak_controller = controller
+    app.aboutToQuit.connect(controller.shutdown)
     controller.show_launcher()
     return app.exec()

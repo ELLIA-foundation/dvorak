@@ -137,6 +137,30 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
             writer.writerow(out)
 
 
+def _write_root_pdf(rows: list[dict], pdf_path: Path, scope_bw_hz: float) -> None:
+    """Write a ROOT PDF beside the matplotlib PNG when ROOT can be imported."""
+    repo = next(
+        parent
+        for parent in Path(__file__).resolve().parents
+        if (parent / "lib" / "paths.py").is_file() and (parent / "gui").is_dir()
+    )
+    gui = repo / "gui"
+    if str(gui) not in sys.path:
+        sys.path.insert(0, str(gui))
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+    try:
+        from dvorak_root.launch import render_once
+        from frequency_plot import frequency_spec
+
+        written = render_once(frequency_spec(rows, scope_bw_hz), pdf_path)
+    except Exception as exc:  # noqa: BLE001 — matplotlib PNG is the fallback
+        print(f"ROOT PDF skipped: {exc}")
+        return
+    print(f"Wrote {written}")
+
+
 def _plot(rows: list[dict], output_path: Path, scope_bw_hz: float, show: bool) -> None:
     freq = np.asarray([row["frequency_hz"] for row in rows], dtype=float)
     ratio_db = np.asarray([row["ratio_db"] for row in rows], dtype=float)
@@ -166,6 +190,7 @@ def _plot(rows: list[dict], output_path: Path, scope_bw_hz: float, show: bool) -
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
+    _write_root_pdf(rows, output_path.with_suffix(".pdf"), scope_bw_hz)
     if show:
         plt.show()
     else:

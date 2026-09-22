@@ -507,7 +507,7 @@ def write_analysis(
     show: bool = False,
     run: dict[str, Any] | None = None,
 ) -> list[Path]:
-    """Write CSV, summary JSON, METRICS.md, PNG figures, and analysis.pdf."""
+    """Write CSV, summary JSON, METRICS.md, PNG figures, analysis.pdf, and root_figures.json."""
     out_dir.mkdir(parents=True, exist_ok=True)
     written = [
         out_dir / f"{source.stem}_events.csv",
@@ -520,6 +520,14 @@ def write_analysis(
         shutil.copy2(METRICS_SRC, metrics)
         written.append(metrics)
     written.extend(save_figures(result, out_dir, include_first, show))
+    root_figures = out_dir / "root_figures.json"
+    from spark_gap_figures import spark_figure_specs
+
+    root_figures.write_text(
+        json.dumps({"figures": spark_figure_specs(result, include_first)}, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    written.append(root_figures)
     return written
 
 

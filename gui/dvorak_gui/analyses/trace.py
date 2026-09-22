@@ -20,6 +20,7 @@ from lib.waveform import load_waveform
 from ..catalog import CaptureRecord
 from ..kinds import KIND_WAVEFORM
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
+from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.trace_plot import TracePlot, format_seconds
 from ..window import AnalysisWindow, _format_record
 from ..workers import WorkerHandle
@@ -31,6 +32,7 @@ class TraceWindow(AnalysisWindow):
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._plot: TracePlot | None = None
         self._worker = WorkerHandle()
+        self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._loaded_meta: dict[str, Any] = {}
         super().__init__(spec, controller)
@@ -43,7 +45,13 @@ class TraceWindow(AnalysisWindow):
         export_act = QAction("Export plot…", self)
         export_act.setShortcut(QKeySequence.StandardKey.Save)
         export_act.triggered.connect(self._export_plot)
+        legacy_act = QAction("Legacy ROOT", self)
+        legacy_act.triggered.connect(self._open_legacy_root)
+        pdf_act = QAction("Export PDF…", self)
+        pdf_act.triggered.connect(self._export_pdf)
         file_menu.insertAction(close_act, export_act)
+        file_menu.insertAction(close_act, pdf_act)
+        file_menu.insertAction(close_act, legacy_act)
 
         view_menu = self.menuBar().addMenu("&View")
         reset_act = QAction("Reset view", self)
@@ -54,6 +62,8 @@ class TraceWindow(AnalysisWindow):
     def _workspace_panes(self) -> list[QWidget]:
         self._plot = TracePlot()
         self._plot.status_changed.connect(self._on_plot_status)
+        self._plot.legacy_root_requested.connect(self._open_legacy_root)
+        self._plot.pdf_requested.connect(self._export_pdf)
 
         heading = QLabel("Capture")
         self._detail = QPlainTextEdit()
@@ -149,9 +159,44 @@ class TraceWindow(AnalysisWindow):
             return
         self.statusBar().showMessage(f"Wrote {path}")
 
+    def _publication_spec(self):
+        if self._plot is None:
+            return None
+        name = self._chosen.stem if self._chosen is not None else "trace"
+        return self._plot.publication_spec(name)
+
+    def _open_legacy_root(self) -> None:
+        spec = self._publication_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        open_in_legacy_root(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            on_status=self.statusBar().showMessage,
+        )
+
+    def _export_pdf(self) -> None:
+        spec = self._publication_spec()
+        if spec is None or self._chosen is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        default = _plots_dir(self._chosen) / f"{self._chosen.stem}.pdf"
+        save_pdf(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            default,
+            on_status=self.statusBar().showMessage,
+        )
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._load_gen += 1
         self._worker.cancel()
+        self._export_worker.cancel()
         super().closeEvent(event)
 
 
