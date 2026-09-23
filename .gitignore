@@ -4,4 +4,7 @@
 __pycache__/
 *.pyc
 *.mp4
+*.mov
+*.MOV
+Measurements/Videos/**/data/*.json
 gui/.venv/

@@ -36,7 +36,7 @@ python tools/sync_measurements.py
 ```
 
 That fetches `origin` and checks out each campaign `Data/` folder from
-`origin/master`. NPZ and JSON are tracked in git; PNG, PDF, and MP4 stay
+`origin/master`. NPZ and JSON are tracked in git; PNG, PDF, MP4, and MOV stay
 gitignored. The script refuses to run if those paths have local changes.
 `--all` replaces the entire `Measurements/` tree (including
 `Analysis_scripts`) and removes files that are not on that ref.
@@ -64,8 +64,13 @@ slew-rate histograms). Detect events is enough to open Metrics and Overlay.
 Saved figures stays on the PNGs.
 
 **Frequency response** plots a sweep (dB ratio and Vpp, log frequency) as a
-ROOT canvas with the same Legacy ROOT button. **Camera clip** is listed but
-disabled — the catalogue already indexes videos; a viewer comes later.
+ROOT canvas with the same Legacy ROOT button.
+
+**Video Analysis** plays clips stored under `Measurements/Videos/<campaign>/`
+(MP4 or MOV, directly in the campaign folder). The left pane lists those
+campaigns; select a clip to play it. Shift-click or Command-click selects
+several clips. Bench captures in `Measurements/<campaign>/Data/` still show
+up in the other analyses' catalogue; this window does not use that list.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,
