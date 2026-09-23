@@ -13,7 +13,7 @@ A **two-pass** search is used. Local maxima are not used: on this instrument
 the breakdown “peak” is a short plateau plus 200 V LSB chatter.
 
 1. **Coarse pass.** On a 50 ns stride, flag samples where voltage falls by at
-   least `drop_threshold_v` (default 5 kV) inside `drop_window_s` (default
+   least `drop_threshold_v` (default 1.5 kV) inside `drop_window_s` (default
    100 ns). Hits within `merge_gap_s` (default 5 µs) become one candidate.
 2. **Full-resolution refine.** In a ±2 µs window, the collapse index is the
    start of the steepest ~20 ns drop. All times and voltages below are taken

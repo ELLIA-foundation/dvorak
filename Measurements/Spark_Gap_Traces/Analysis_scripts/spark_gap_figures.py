@@ -67,6 +67,12 @@ DEFAULT_METRICS = (
     "slew_collapse_mean",
 )
 OVERLAY_SCREEN_POINTS = 8000
+COMPOSE_MAX_PADS = 12
+COMPOSE_DEFAULT_METRICS = (
+    "slew_collapse_mean",
+    "v_breakdown",
+    "t_collapse_10_90",
+)
 
 
 def metric_catalog(events: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -178,6 +184,62 @@ def overlay_figure_spec(
         )
         name, label = "overlay_discharge", "Discharge overlay"
     return _single(name, label, scope_limit_footer(detection), panel)
+
+
+def compose_source_limit(n_metrics: int) -> int:
+    count = max(1, n_metrics)
+    if count >= COMPOSE_MAX_PADS:
+        return 1
+    return max(1, COMPOSE_MAX_PADS // count)
+
+
+def compose_figure_spec(
+    sources: list[dict[str, Any]],
+    *,
+    names: list[str],
+    mode: str,
+    include_first: bool,
+) -> dict[str, Any]:
+    """One pad per measurement, one row per metric (row-major, cols = measurements)."""
+    fields = {field["name"]: field for field in PLOT_METRICS}
+    metrics = [name for name in names if name in fields]
+    rows_src = [src for src in sources if src.get("events")]
+    limit = compose_source_limit(len(metrics) or 1)
+    rows_src = rows_src[:limit]
+    metrics = metrics[:COMPOSE_MAX_PADS]
+    panels = []
+    for name in metrics:
+        field = fields[name]
+        for src in rows_src:
+            pool = _filter_events(list(src.get("events") or []), include_first)
+            label = str(src.get("label") or "measurement")
+            if mode == "histogram":
+                panel = _hist(
+                    [row.get(name) for row in pool],
+                    float(field["scale"]),
+                    str(field["unit"]),
+                    str(field["label"]),
+                )
+            else:
+                panel = _sequence_panel(pool, field, mark_first=include_first)
+            panel["title"] = label
+            panels.append(panel)
+    if not panels:
+        panels.append({"title": "Select measurements and a metric", "series": []})
+    detection = dict(rows_src[0].get("detection") or {}) if rows_src else {}
+    cols = max(1, len(rows_src)) if rows_src else 1
+    n_rows = max(1, math.ceil(len(panels) / cols))
+    kind = "Histograms" if mode == "histogram" else "Sequential"
+    return {
+        "name": f"compose_{mode}",
+        "label": f"Compose {kind}",
+        "title": f"{kind} — compose",
+        "footer": scope_limit_footer(detection) if detection else "",
+        "cols": cols,
+        "width": max(480, 360 * cols),
+        "height": max(360, 280 * n_rows + 40),
+        "panels": panels,
+    }
 
 
 def spark_figure_specs(result: AnalysisResult, include_first: bool) -> list[dict[str, Any]]:

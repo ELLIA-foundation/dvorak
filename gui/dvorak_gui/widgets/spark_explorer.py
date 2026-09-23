@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -329,6 +329,253 @@ class OverlayPane(QWidget):
         spec = _fig.overlay_figure_spec(**kwargs, max_points=_fig.OVERLAY_SCREEN_POINTS)
         export = _fig.overlay_figure_spec(**kwargs, max_points=None)
         self._canvas.set_spec(spec, export_spec=export)
+
+
+class ComposePane(QWidget):
+    """Compare the same metric figure across several saved measurements."""
+
+    refresh_requested = Signal()
+
+    def __init__(self, bridge: RootBridge, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._loader = None
+        self._records: list[Any] = []
+        self._live: dict[str, Any] | None = None
+        self._updating = False
+
+        self._meas = QListWidget()
+        self._meas.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._meas.itemChanged.connect(self._redraw)
+
+        all_btn = QPushButton("All analyzed")
+        all_btn.clicked.connect(self._select_analyzed)
+        none_btn = QPushButton("None")
+        none_btn.clicked.connect(self._select_none)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self.refresh_requested.emit)
+        picks = QHBoxLayout()
+        picks.addWidget(all_btn)
+        picks.addWidget(none_btn)
+        picks.addWidget(refresh_btn)
+
+        self._seq = QRadioButton("Sequence")
+        self._hist = QRadioButton("Histogram")
+        self._hist.setChecked(True)
+        mode = QButtonGroup(self)
+        mode.addButton(self._seq)
+        mode.addButton(self._hist)
+        self._seq.toggled.connect(self._redraw)
+
+        self._typical = QRadioButton("Typical")
+        self._all = QRadioButton("All events")
+        self._typical.setChecked(True)
+        population = QButtonGroup(self)
+        population.addButton(self._typical)
+        population.addButton(self._all)
+        self._typical.toggled.connect(self._redraw)
+
+        self._metrics = QListWidget()
+        self._metrics.itemChanged.connect(self._redraw)
+
+        self._note = QLabel("")
+        self._note.setWordWrap(True)
+        self._note.setStyleSheet("color: palette(mid);")
+
+        self._canvas = RootCanvas(
+            bridge, self, empty="Select measurements and a metric."
+        )
+
+        controls = QVBoxLayout()
+        controls.addWidget(QLabel("Measurements"))
+        controls.addLayout(picks)
+        controls.addWidget(self._meas, stretch=1)
+        controls.addWidget(QLabel("Figure"))
+        controls.addWidget(self._hist)
+        controls.addWidget(self._seq)
+        controls.addWidget(self._typical)
+        controls.addWidget(self._all)
+        controls.addWidget(QLabel("Metrics"))
+        controls.addWidget(self._metrics, stretch=1)
+        controls.addWidget(self._note)
+
+        side = QWidget()
+        side.setMinimumWidth(240)
+        side.setMaximumWidth(320)
+        side.setLayout(controls)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(side)
+        layout.addWidget(self._canvas, stretch=1)
+        self._fill_metrics([])
+
+    def set_event_loader(self, loader) -> None:
+        self._loader = loader
+
+    def shutdown(self) -> None:
+        self._canvas.shutdown()
+
+    def clear(self) -> None:
+        self._live = None
+        self._redraw()
+
+    def set_pdf_default(self, path: Path) -> None:
+        self._canvas.set_pdf_default(path)
+
+    def set_sources(self, records: list[Any], live: dict[str, Any] | None = None) -> None:
+        self._records = list(records)
+        self._live = dict(live) if live else None
+        selected = set(self._checked_stems())
+        self._updating = True
+        self._meas.blockSignals(True)
+        self._meas.clear()
+        for record in self._records:
+            stem = str(getattr(record, "stem", ""))
+            label = str(getattr(record, "run_name", None) or stem)
+            payload = self._payload_for(record)
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, stem)
+            item.setData(Qt.ItemDataRole.UserRole + 1, str(getattr(record, "path", "")))
+            if payload is None:
+                item.setText(f"{label}  (no analysis)")
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(Qt.CheckState.Unchecked)
+            else:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(
+                    Qt.CheckState.Checked if stem in selected else Qt.CheckState.Unchecked
+                )
+            self._meas.addItem(item)
+        self._meas.blockSignals(False)
+        self._updating = False
+        events = []
+        for record in self._records:
+            payload = self._payload_for(record)
+            if payload:
+                events.extend(payload.get("events") or [])
+        self._fill_metrics(events)
+        self._redraw()
+
+    def _fill_metrics(self, events: list[dict[str, Any]]) -> None:
+        selected = {
+            item.data(Qt.ItemDataRole.UserRole) for item in self._checked_metric_items()
+        }
+        if not selected:
+            selected = set(_fig.COMPOSE_DEFAULT_METRICS)
+        self._updating = True
+        self._metrics.blockSignals(True)
+        self._metrics.clear()
+        for field in _fig.metric_catalog(events or None):
+            item = QListWidgetItem(f"{field['label']}  ({field['unit']})")
+            item.setData(Qt.ItemDataRole.UserRole, field["name"])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if field["name"] in selected
+                else Qt.CheckState.Unchecked
+            )
+            self._metrics.addItem(item)
+        self._metrics.blockSignals(False)
+        self._updating = False
+
+    def _payload_for(self, record: Any) -> dict[str, Any] | None:
+        stem = str(getattr(record, "stem", ""))
+        live = self._live
+        if live and live.get("stem") == stem and live.get("events"):
+            return live
+        if self._loader is None:
+            return None
+        path = getattr(record, "path", None)
+        if path is None:
+            return None
+        return self._loader(Path(path))
+
+    def _checked_stems(self) -> list[str]:
+        stems = []
+        for row in range(self._meas.count()):
+            item = self._meas.item(row)
+            if item is not None and item.checkState() == Qt.CheckState.Checked:
+                stems.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        return stems
+
+    def _checked_metric_items(self) -> list[QListWidgetItem]:
+        items = []
+        for row in range(self._metrics.count()):
+            item = self._metrics.item(row)
+            if item is not None and item.checkState() == Qt.CheckState.Checked:
+                items.append(item)
+        return items
+
+    def _select_analyzed(self) -> None:
+        self._updating = True
+        self._meas.blockSignals(True)
+        for row in range(self._meas.count()):
+            item = self._meas.item(row)
+            if item is None:
+                continue
+            enabled = bool(item.flags() & Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(
+                Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked
+            )
+        self._meas.blockSignals(False)
+        self._updating = False
+        self._redraw()
+
+    def _select_none(self) -> None:
+        self._updating = True
+        self._meas.blockSignals(True)
+        for row in range(self._meas.count()):
+            item = self._meas.item(row)
+            if item is not None:
+                item.setCheckState(Qt.CheckState.Unchecked)
+        self._meas.blockSignals(False)
+        self._updating = False
+        self._redraw()
+
+    def _redraw(self, _checked: bool = False) -> None:
+        if self._updating:
+            return
+        names = [item.data(Qt.ItemDataRole.UserRole) for item in self._checked_metric_items()]
+        sources = []
+        by_stem = {str(getattr(record, "stem", "")): record for record in self._records}
+        for stem in self._checked_stems():
+            record = by_stem.get(stem)
+            if record is None:
+                continue
+            payload = self._payload_for(record)
+            if payload is None:
+                continue
+            sources.append(
+                {
+                    "label": str(getattr(record, "run_name", None) or stem),
+                    "events": payload.get("events") or [],
+                    "detection": payload.get("detection") or {},
+                }
+            )
+        if not sources:
+            self._note.setText("")
+            self._canvas.clear("Select measurements and a metric.")
+            return
+        if not names:
+            self._note.setText("")
+            self._canvas.clear("Select at least one metric.")
+            return
+        limit = int(_fig.compose_source_limit(len(names)))
+        truncated = len(sources) > limit
+        sources = sources[:limit]
+        if truncated:
+            self._note.setText(
+                f"Showing the first {limit} measurements ({_fig.COMPOSE_MAX_PADS}-pad limit)."
+            )
+        else:
+            self._note.setText("")
+        spec = _fig.compose_figure_spec(
+            sources,
+            names=names,
+            mode="histogram" if self._hist.isChecked() else "sequence",
+            include_first=self._all.isChecked(),
+        )
+        self._canvas.set_spec(spec)
 
 
 class SparkExplorer(QWidget):

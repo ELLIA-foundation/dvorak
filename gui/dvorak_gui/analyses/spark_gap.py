@@ -28,13 +28,13 @@ from lib.paths import CAMPAIGN_SPARK_GAP
 from lib.waveform import load_waveform
 
 from ..campaign_import import load_campaign_module
-from ..catalog import CaptureRecord
+from ..catalog import CaptureRecord, scan
 from ..kinds import KIND_WAVEFORM
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, Option, get, register
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.figure_gallery import open_local_path, reveal_in_folder
 from ..widgets.param_form import ParamForm
-from ..widgets.spark_explorer import SparkExplorer
+from ..widgets.spark_explorer import ComposePane, SparkExplorer
 from ..widgets.trace_plot import EventMark, TracePlot, format_seconds
 from ..window import AnalysisWindow
 from ..workers import WorkerHandle
@@ -116,6 +116,25 @@ OPTIONS = (
 
 def analysis_output_dir(npz_path: Path) -> Path:
     return npz_path.parent / "plots" / f"analysis_{npz_path.stem}"
+
+
+def load_analysis_events(npz_path: Path) -> dict[str, Any] | None:
+    """Events and detection from a saved ``*_summary.json``, if present."""
+    summary_path = analysis_output_dir(npz_path) / f"{npz_path.stem}_summary.json"
+    if not summary_path.is_file():
+        return None
+    try:
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    events = payload.get("events")
+    if not isinstance(events, list) or not events:
+        return None
+    return {
+        "events": events,
+        "detection": payload.get("detection") if isinstance(payload.get("detection"), dict) else {},
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+    }
 
 
 def _detect_events(
@@ -389,6 +408,7 @@ class SparkGapWindow(AnalysisWindow):
         self._plot: TracePlot | None = None
         self._form: ParamForm | None = None
         self._explorer: SparkExplorer | None = None
+        self._compose: ComposePane | None = None
         self._load_worker = WorkerHandle()
         self._detect_worker = WorkerHandle()
         self._analysis_worker = WorkerHandle()
@@ -487,6 +507,9 @@ class SparkGapWindow(AnalysisWindow):
         self._plot.pdf_requested.connect(self._export_pdf)
 
         self._explorer = SparkExplorer(self._controller.root)
+        self._compose = ComposePane(self._controller.root)
+        self._compose.set_event_loader(load_analysis_events)
+        self._compose.refresh_requested.connect(self._refresh_compose)
         self._events_table = QTableWidget(0, len(_sg.CSV_COLUMNS))
         self._events_table.setHorizontalHeaderLabels(
             [_column_header(name) for name in _sg.CSV_COLUMNS]
@@ -515,10 +538,12 @@ class SparkGapWindow(AnalysisWindow):
         self._tabs = QTabWidget()
         self._tabs.addTab(self._plot, "Overview")
         self._tabs.addTab(self._explorer, "Figures")
+        self._tabs.addTab(self._compose, "Compose")
         self._tabs.addTab(self._events_table, "Events")
         self._tabs.addTab(self._summary, "Summary")
 
         self._update_actions()
+        self._refresh_compose()
         return [panel, self._tabs]
 
     def _on_capture_selected(self, record: CaptureRecord | None) -> None:
@@ -731,6 +756,7 @@ class SparkGapWindow(AnalysisWindow):
                 list(payload.get("snippets") or []),
                 detection,
             )
+        self._refresh_compose()
         self._count_label.setText(f"{n_events} breakdowns ({n_typical} typical)")
 
     def _fill_preview_table(self, events: list[EventMark]) -> None:
@@ -898,7 +924,32 @@ class SparkGapWindow(AnalysisWindow):
         self._export_worker.cancel()
         if self._explorer is not None:
             self._explorer.shutdown()
+        if self._compose is not None:
+            self._compose.shutdown()
         super().closeEvent(event)
+
+    def _refresh_catalogue(self) -> None:
+        super()._refresh_catalogue()
+        self._refresh_compose()
+
+    def _refresh_compose(self) -> None:
+        if self._compose is None:
+            return
+        records = [
+            record
+            for record in scan(self._controller.resolved_data_root())
+            if record.kind == KIND_WAVEFORM and record.campaign == CAMPAIGN_SPARK_GAP
+        ]
+        live = None
+        if self._chosen is not None and self._preview and self._preview.get("events"):
+            live = {
+                "stem": self._chosen.stem,
+                "events": self._preview["events"],
+                "detection": self._preview.get("detection") or {},
+            }
+        self._compose.set_sources(records, live)
+        plots = self._controller.resolved_data_root() / CAMPAIGN_SPARK_GAP / "Data" / "plots"
+        self._compose.set_pdf_default(plots / "compose.pdf")
 
 
 def _create_window(controller: Any) -> SparkGapWindow:
