@@ -21,6 +21,160 @@ from ..workers import WorkerHandle
 from .figure_gallery import FigureGallery
 
 
+class RootCanvas(QWidget):
+    """One figure spec on a JSROOT view, with Legacy ROOT and PDF."""
+
+    def __init__(
+        self,
+        bridge: RootBridge,
+        parent: QWidget | None = None,
+        empty: str = "Nothing to draw yet.",
+    ) -> None:
+        super().__init__(parent)
+        self._bridge = bridge
+        self._empty = empty
+        self._spec: dict | None = None
+        self._export_spec: dict | None = None
+        self._default_pdf = Path("figure.pdf")
+        self._gen = 0
+        self._render_worker = WorkerHandle(self)
+        self._export_worker = WorkerHandle(self)
+
+        self._view = JsRootView(bridge.jsroot, self)
+        self._legacy = QPushButton("Legacy ROOT")
+        self._legacy.setToolTip(
+            "Open this figure in the interactive ROOT GUI (root -l)"
+        )
+        self._legacy.clicked.connect(self._open_legacy)
+        self._pdf = QPushButton("Save PDF…")
+        self._pdf.clicked.connect(self._save_pdf)
+        self._status = QLabel("")
+        self._status.setWordWrap(True)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(self._status, stretch=1)
+        buttons.addWidget(self._pdf)
+        buttons.addWidget(self._legacy)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._view, stretch=1)
+        layout.addLayout(buttons)
+
+        bridge.ready.connect(self._on_root_ready)
+        if bridge.report:
+            self._on_root_ready(bridge.report)
+        self._view.show_message(self._empty)
+        self._update_buttons()
+
+    def shutdown(self) -> None:
+        self._gen += 1
+        self._render_worker.cancel()
+        self._export_worker.cancel()
+
+    def clear(self, message: str | None = None) -> None:
+        self.set_spec(None, message=message or self._empty)
+
+    def set_pdf_default(self, path: Path) -> None:
+        self._default_pdf = path
+
+    def current_spec(self) -> dict | None:
+        return self._export_spec or self._spec
+
+    def set_spec(
+        self,
+        spec: dict | None,
+        *,
+        export_spec: dict | None = None,
+        message: str | None = None,
+    ) -> None:
+        self._gen += 1
+        self._spec = spec
+        self._export_spec = export_spec or spec
+        if spec is None:
+            self._view.show_message(message or self._empty)
+            self._status.setText("")
+            self._update_buttons()
+            return
+        if not self._view.usable:
+            report = self._bridge.report or {}
+            self._view.show_message(
+                str(report.get("error") or message or "Looking for a ROOT installation…")
+            )
+            self._update_buttons()
+            return
+        self._status.setText("Drawing…")
+        self._view.show_message("Rendering…")
+        self._update_buttons()
+        gen = self._gen
+        client = self._bridge.client
+
+        def job() -> str:
+            reply = client.render(spec, outputs=("json",))
+            return str(reply.get("json") or "")
+
+        def done(result: object) -> None:
+            if gen != self._gen:
+                return
+            if isinstance(result, str) and result:
+                self._view.draw(result)
+                self._status.setText("")
+            else:
+                self._view.show_message("Empty figure.")
+                self._status.setText("")
+
+        def failed(error: str) -> None:
+            if gen != self._gen:
+                return
+            self._status.setText("ROOT draw failed.")
+            self._view.show_message(error)
+
+        self._render_worker.start(job, on_finished=done, on_failed=failed)
+
+    def _on_root_ready(self, report: dict) -> None:
+        path = str(report.get("jsroot") or "")
+        if path:
+            self._view.set_bundle(path)
+        elif report.get("error"):
+            self._view.show_message(str(report["error"]))
+        if self._spec is not None:
+            self.set_spec(self._spec, export_spec=self._export_spec)
+
+    def _update_buttons(self) -> None:
+        has_spec = self.current_spec() is not None
+        self._legacy.setEnabled(has_spec)
+        self._pdf.setEnabled(has_spec)
+
+    def _open_legacy(self) -> None:
+        spec = self.current_spec()
+        if spec is None:
+            return
+        open_in_legacy_root(
+            self.window(),
+            self._bridge,
+            self._export_worker,
+            spec,
+            on_status=self._status.setText,
+        )
+
+    def _save_pdf(self) -> None:
+        spec = self.current_spec()
+        if spec is None:
+            return
+        name = str(spec.get("name") or "figure")
+        default = self._default_pdf
+        if default.name in {"figure.pdf", ""}:
+            default = Path(f"{name}.pdf")
+        save_pdf(
+            self.window(),
+            self._bridge,
+            self._export_worker,
+            spec,
+            default,
+            on_status=self._status.setText,
+        )
+
+
 class RootGallery(QWidget):
     """Spark-gap figures 02–08: JSROOT when it can, PNGs otherwise."""
 

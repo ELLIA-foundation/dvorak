@@ -54,10 +54,12 @@ Qt so zooming a multi-million-point trace stays responsive.
 **Spark Gap Analysis** uses the same plot. **Detect events** marks breakdowns
 (orange typical, red first-cycle). **Run full analysis** writes
 `Data/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08,
-`analysis.pdf`, and `root_figures.json`). Tabs: Overview | Figures 02–08 |
-Events | Summary. Figures 02–08 open in JSROOT when ROOT is installed, with
-**Legacy ROOT** for the selected figure. Without ROOT the tab stays on the
-PNGs.
+`analysis.pdf`, and `root_figures.json`). Tabs: Overview | Figures | Events |
+Summary. **Figures** has Metrics (any event scalar as a sequence or
+histogram), Overlay (discharge / ramp / post-collapse for chosen events), and
+Saved figures (the 02–08 pack after a full analysis). Detect events is enough
+to open Metrics and Overlay. **Legacy ROOT** and **Save PDF** apply to the
+current figure. Without ROOT, Saved figures stays on the PNGs.
 
 **Frequency response** plots a sweep (dB ratio and Vpp, log frequency) as a
 ROOT canvas with the same Legacy ROOT button. **Camera clip** is listed but

@@ -34,7 +34,7 @@ from ..registry import FAMILY_ANALYSIS, AnalysisSpec, Option, get, register
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.figure_gallery import open_local_path, reveal_in_folder
 from ..widgets.param_form import ParamForm
-from ..widgets.root_gallery import RootGallery
+from ..widgets.spark_explorer import SparkExplorer
 from ..widgets.trace_plot import EventMark, TracePlot, format_seconds
 from ..window import AnalysisWindow
 from ..workers import WorkerHandle
@@ -135,13 +135,7 @@ def _detect_events(
         scope_bw_hz=params["scope_bw_hz"],
         capacitance_f=params.get("capacitance_f"),
     )
-    events = [_event_preview(event) for event in result.events]
-    return {
-        "events": events,
-        "detection": dict(result.detection),
-        "n_events": int(result.detection.get("n_events", len(events))),
-        "n_typical": int(result.detection.get("n_typical", 0)),
-    }
+    return _payload_from_result(result)
 
 
 def _run_full_analysis(
@@ -174,23 +168,67 @@ def _run_full_analysis(
         voltage_v=voltage_v,
         metadata=metadata,
     )
+    payload = _payload_from_result(result)
+    payload["out_dir"] = str(out_dir)
+    return payload
+
+
+def _payload_from_result(result: Any) -> dict[str, Any]:
+    events = list(result.events)
     return {
-        "out_dir": str(out_dir),
-        "events": [event.to_record() for event in result.events],
+        "events": [event.to_record() for event in events],
+        "snippets": [_event_snippet(event, result.time_s) for event in events],
         "detection": dict(result.detection),
         "summary": dict(result.summary),
-        "n_events": int(result.detection.get("n_events", len(result.events))),
+        "n_events": int(result.detection.get("n_events", len(events))),
         "n_typical": int(result.detection.get("n_typical", 0)),
     }
 
 
-def _event_preview(event: Any) -> dict[str, Any]:
-    return {
+def _event_snippet(event: Any, time_s: Any = None) -> dict[str, Any]:
+    snippet: dict[str, Any] = {
         "event_index": int(event.event_index),
-        "first_cycle": bool(event.first_cycle),
-        "t_break": float(event.t_break),
-        "v_breakdown": float(event.v_breakdown),
+        "collapse_t_s": _as_float_list(event.collapse_t_s),
+        "collapse_v": _as_float_list(event.collapse_v),
+        "ramp_t_s": _as_float_list(event.ramp_t_s),
+        "ramp_v": _as_float_list(event.ramp_v),
+        "post_t_s": _as_float_list(event.post_t_s),
+        "post_v": _as_float_list(event.post_v),
+        "v10": _py_scalar(event.v10),
+        "v90": _py_scalar(event.v90),
+        "t10": _py_scalar(event.t10),
+        "t90": _py_scalar(event.t90),
+        "charge_rate": _py_scalar(event.charge_rate),
+        "charge_intercept": _py_scalar(event.charge_intercept),
+        "charge_r2": _py_scalar(event.charge_r2),
+        "ramp_start_index": _py_scalar(event.ramp_start_index),
+        "ramp_t0_s": None,
     }
+    index = event.ramp_start_index
+    if time_s is not None and index is not None:
+        try:
+            snippet["ramp_t0_s"] = float(time_s[int(index)])
+        except (IndexError, TypeError, ValueError):
+            snippet["ramp_t0_s"] = None
+    return snippet
+
+
+def _as_float_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return [float(item) for item in value.tolist()]
+    return [float(item) for item in value]
+
+
+def _py_scalar(value: Any) -> Any:
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, float) and value != value:
+        return None
+    return value
 
 
 def _marks_from_rows(rows: list[dict[str, Any]]) -> list[EventMark]:
@@ -350,7 +388,7 @@ class SparkGapWindow(AnalysisWindow):
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._plot: TracePlot | None = None
         self._form: ParamForm | None = None
-        self._gallery: RootGallery | None = None
+        self._explorer: SparkExplorer | None = None
         self._load_worker = WorkerHandle()
         self._detect_worker = WorkerHandle()
         self._analysis_worker = WorkerHandle()
@@ -448,7 +486,7 @@ class SparkGapWindow(AnalysisWindow):
         self._plot.legacy_root_requested.connect(self._open_legacy_root)
         self._plot.pdf_requested.connect(self._export_pdf)
 
-        self._gallery = RootGallery(self._controller.root)
+        self._explorer = SparkExplorer(self._controller.root)
         self._events_table = QTableWidget(0, len(_sg.CSV_COLUMNS))
         self._events_table.setHorizontalHeaderLabels(
             [_column_header(name) for name in _sg.CSV_COLUMNS]
@@ -476,7 +514,7 @@ class SparkGapWindow(AnalysisWindow):
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self._plot, "Overview")
-        self._tabs.addTab(self._gallery, "Figures 02–08")
+        self._tabs.addTab(self._explorer, "Figures")
         self._tabs.addTab(self._events_table, "Events")
         self._tabs.addTab(self._summary, "Summary")
 
@@ -506,8 +544,8 @@ class SparkGapWindow(AnalysisWindow):
         self._plot.clear_waveform()
         self._fill_preview_table([])
         self._fill_events_table([])
-        if self._gallery is not None:
-            self._gallery.clear()
+        if self._explorer is not None:
+            self._explorer.clear()
         self._summary.clear()
         self._count_label.setText("No detection yet.")
         self._capture_label.setText(f"Loading {record.stem}…")
@@ -551,6 +589,7 @@ class SparkGapWindow(AnalysisWindow):
         except (OSError, json.JSONDecodeError):
             return
         payload.setdefault("events", [])
+        payload.setdefault("snippets", [])
         payload.setdefault("detection", {})
         payload.setdefault("summary", {})
         self._apply_full_result(payload, out_dir, switch_tab=False)
@@ -590,13 +629,7 @@ class SparkGapWindow(AnalysisWindow):
         self._update_actions()
         if self._plot is None or not isinstance(result, dict):
             return
-        self._preview = result
-        marks = _marks_from_rows(result["events"])
-        self._plot.set_events(marks)
-        self._fill_preview_table(marks)
-        n_events = int(result.get("n_events", len(marks)))
-        n_typical = int(result.get("n_typical", 0))
-        self._count_label.setText(f"{n_events} breakdowns ({n_typical} typical)")
+        self._apply_live_result(result)
         self._on_plot_status("")
 
     def _receive_detect_failed(self, message: str) -> None:
@@ -666,12 +699,23 @@ class SparkGapWindow(AnalysisWindow):
         self._out_dir = out_dir
         pdf = out_dir / "analysis.pdf"
         self._pdf_path = pdf if pdf.is_file() else None
+        self._apply_live_result(payload)
+        if self._explorer is not None:
+            self._explorer.set_saved(_root_specs(out_dir), _gallery_items(out_dir))
+            self._explorer.set_pdf_dir(out_dir)
+        self._summary.setPlainText(_format_summary(payload, out_dir))
+        if switch_tab and self._explorer is not None:
+            self._tabs.setCurrentWidget(self._explorer)
+        self._on_plot_status("")
+
+    def _apply_live_result(self, payload: dict[str, Any]) -> None:
         events = list(payload.get("events") or [])
         detection = payload.get("detection") or {}
         n_events = int(payload.get("n_events", detection.get("n_events", len(events))))
         n_typical = int(payload.get("n_typical", detection.get("n_typical", 0)))
         self._preview = {
             "events": events,
+            "snippets": list(payload.get("snippets") or []),
             "detection": detection,
             "n_events": n_events,
             "n_typical": n_typical,
@@ -681,13 +725,13 @@ class SparkGapWindow(AnalysisWindow):
             self._plot.set_events(marks)
         self._fill_preview_table(marks)
         self._fill_events_table(events)
-        if self._gallery is not None:
-            self._gallery.set_content(_root_specs(out_dir), _gallery_items(out_dir))
-        self._summary.setPlainText(_format_summary(payload, out_dir))
+        if self._explorer is not None:
+            self._explorer.set_payload(
+                events,
+                list(payload.get("snippets") or []),
+                detection,
+            )
         self._count_label.setText(f"{n_events} breakdowns ({n_typical} typical)")
-        if switch_tab and self._gallery is not None and self._gallery.count():
-            self._tabs.setCurrentWidget(self._gallery)
-        self._on_plot_status("")
 
     def _fill_preview_table(self, events: list[EventMark]) -> None:
         self._table.setRowCount(len(events))
@@ -852,8 +896,8 @@ class SparkGapWindow(AnalysisWindow):
         self._detect_worker.cancel()
         self._analysis_worker.cancel()
         self._export_worker.cancel()
-        if self._gallery is not None:
-            self._gallery.shutdown()
+        if self._explorer is not None:
+            self._explorer.shutdown()
         super().closeEvent(event)
 
 
@@ -866,8 +910,8 @@ register(
         id=SPARK_GAP_ID,
         title="Spark Gap Analysis",
         description=(
-            "Detect breakdown events on spark-gap oscilloscope traces, preview "
-            "markers, then run the full diagnostic figure pack."
+            "Detect breakdown events on spark-gap oscilloscope traces, plot "
+            "chosen metrics and overlays, then write the diagnostic figure pack."
         ),
         family=FAMILY_ANALYSIS,
         accepted_kinds=(KIND_WAVEFORM,),
