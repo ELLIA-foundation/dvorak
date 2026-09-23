@@ -17,7 +17,24 @@ def load_campaign_module(campaign: str, module: str) -> ModuleType:
     path = campaign_scripts(campaign) / f"{module}.py"
     if not path.is_file():
         raise FileNotFoundError(f"No {module}.py in {campaign} Analysis_scripts ({path})")
-    key = f"dvorak_campaign_{campaign}_{module}"
+    return _load_module(path, f"dvorak_campaign_{campaign}_{module}")
+
+
+def load_video_module(module: str) -> ModuleType:
+    """Load a module from ``Measurements/Videos/Analysis_scripts``."""
+    from lib.paths import video_scripts_dir
+
+    directory = video_scripts_dir()
+    directory_s = str(directory)
+    if directory_s not in sys.path:
+        sys.path.insert(0, directory_s)
+    path = directory / f"{module}.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"No {module}.py in {path.parent}")
+    return _load_module(path, f"dvorak_video_{module}")
+
+
+def _load_module(path, key: str) -> ModuleType:
     existing = sys.modules.get(key)
     if existing is not None:
         return existing

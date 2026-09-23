@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QBrush, QColor, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -26,16 +26,38 @@ from .figure_gallery import reveal_in_folder
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 
+_CACHE_COLOR = {
+    "fresh": "#2e7d32",
+    "stale": "#ef6c00",
+    "missing": "#9e9e9e",
+}
+
+
+def _cache_status(path: Path) -> str:
+    from ..campaign_import import load_video_module
+
+    return load_video_module("dataset").cache_status(path)
+
 
 class VideoBrowser(QWidget):
-    """List video campaigns and their clips. Multi-select is for later overlay."""
+    """List video campaigns and their clips. Multi-select feeds the overlay."""
 
     current_clip_changed = Signal(object)
+    selection_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._build()
         self.refresh()
+
+    def current_campaign(self) -> str | None:
+        item = self._tree.currentItem()
+        if item is None:
+            return None
+        parent = item.parent()
+        if parent is None:
+            return item.text(0)
+        return parent.text(0)
 
     def current_clip(self) -> Path | None:
         item = self._tree.currentItem()
@@ -72,9 +94,13 @@ class VideoBrowser(QWidget):
                 parent.setToolTip(0, str(videos_dir() / campaign))
                 self._tree.addTopLevelItem(parent)
                 for clip in list_video_clips(campaign):
-                    child = QTreeWidgetItem([clip.name])
+                    status = _cache_status(clip)
+                    child = QTreeWidgetItem([clip.name, status])
                     child.setData(0, PATH_ROLE, clip)
                     child.setToolTip(0, str(clip))
+                    color = _CACHE_COLOR.get(status)
+                    if color:
+                        child.setForeground(1, QBrush(QColor(color)))
                     parent.addChild(child)
                     if current is not None and clip.resolve() == current.resolve():
                         select_item = child
@@ -90,6 +116,7 @@ class VideoBrowser(QWidget):
 
         self._apply_filter(query)
         self._tree.resizeColumnToContents(0)
+        self._tree.resizeColumnToContents(1)
         self._update_count_label()
         self.current_clip_changed.emit(self.current_clip())
 
@@ -112,7 +139,7 @@ class VideoBrowser(QWidget):
         self._root_label.setStyleSheet("color: palette(mid);")
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(("Clip",))
+        self._tree.setHeaderLabels(("Clip", "Cache"))
         self._tree.setUniformRowHeights(True)
         self._tree.setRootIsDecorated(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -120,7 +147,7 @@ class VideoBrowser(QWidget):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
         self._tree.currentItemChanged.connect(self._on_current_changed)
-        self._tree.itemSelectionChanged.connect(self._update_count_label)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
 
         self._count_label = QLabel()
         self._count_label.setStyleSheet("color: palette(mid);")
@@ -169,6 +196,10 @@ class VideoBrowser(QWidget):
         if selected:
             text += f" · {selected} selected"
         self._count_label.setText(text)
+
+    def _on_selection_changed(self) -> None:
+        self._update_count_label()
+        self.selection_changed.emit()
 
     def _on_current_changed(
         self,

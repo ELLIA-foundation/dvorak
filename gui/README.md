@@ -68,9 +68,13 @@ ROOT canvas with the same Legacy ROOT button.
 
 **Video Analysis** plays clips stored under `Measurements/Videos/<campaign>/`
 (MP4 or MOV, directly in the campaign folder). The left pane lists those
-campaigns; select a clip to play it. Shift-click or Command-click selects
-several clips. Bench captures in `Measurements/<campaign>/Data/` still show
-up in the other analyses' catalogue; this window does not use that list.
+campaigns and whether each chronograph cache is fresh, stale, or missing.
+Select a clip to play it and plot intensity versus time. Drag the green
+rising-edge line to correct it. Shift-click or Command-click overlays those
+clips, in raw time or aligned on each rising edge, as absolute intensity or
+each trace divided by its own max. **Extract** decodes the current campaign
+in the background. Bench captures in `Measurements/<campaign>/Data/` still
+show up in the other analyses' catalogue; this window does not use that list.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,
