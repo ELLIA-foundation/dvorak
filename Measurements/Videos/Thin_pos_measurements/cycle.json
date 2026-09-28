@@ -1,0 +1,7 @@
+{
+  "tube_on_s": 3.6,
+  "current_on_s": 6.6,
+  "current_off_s": 9.6,
+  "tube_off_s": 12.6,
+  "clips": {}
+}

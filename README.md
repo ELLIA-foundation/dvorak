@@ -48,7 +48,7 @@ captures under `Measurements/`. It does not import instrument drivers.
 
 ```bash
 bash gui/run.sh
-python tools/sync_measurements.py   # new lab data from origin/master
+python tools/sync_measurements.py   # save plots/, then new raw Data/ from origin/master
 ```
 
 See [gui/README.md](gui/README.md). Measurement capture stays on **master**.

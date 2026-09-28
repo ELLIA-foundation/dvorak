@@ -1,0 +1,15 @@
+{
+  "model_id": "x123_sipin",
+  "points": 2048,
+  "calibration": {
+    "offset_kev": 0.0007,
+    "slope_kev_per_channel": 0.01466,
+    "channel_origin": 0,
+    "source": "Andras ODS keV column (both workbooks)"
+  },
+  "run_name": "pre_1",
+  "phase": "pre",
+  "source_format": "ods",
+  "source_file": "U containing material - Shadowgraph 5 min activation test.ods",
+  "source_column": 0
+}

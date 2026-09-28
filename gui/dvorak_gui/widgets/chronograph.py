@@ -34,6 +34,12 @@ _COLORS = (
     "#17becf",
 )
 _EDGE = "#2ca02c"
+_REGION_COLOR = {
+    "off": (31, 119, 180),
+    "on": (255, 127, 14),
+    "off2": (127, 127, 127),
+    "tube": (44, 160, 44),
+}
 
 
 @dataclass
@@ -79,6 +85,8 @@ class ChronographPlot(QWidget):
         self._busy = False
         self._campaign: str | None = None
         self._edge: pg.InfiniteLine | None = None
+        self._windows: list[tuple[str, float, float, str]] = []
+        self._markers: list[tuple[str, float]] = []
         self._build()
 
     def set_campaign(self, name: str | None) -> None:
@@ -106,6 +114,17 @@ class ChronographPlot(QWidget):
         shown = total if completed >= total else min(total, int(completed) + 1)
         label = name.replace("%", "%%") if name else "Extracting"
         self._progress.setFormat(f"{label}  {shown}/{total}")
+
+    def set_windows(
+        self,
+        windows: list[tuple[str, float, float, str]],
+        markers: list[tuple[str, float]] | None = None,
+    ) -> None:
+        """Absolute-time phase spans. Drawn for a single trace, shifted when aligned on t1."""
+        self._windows = list(windows)
+        self._markers = [] if markers is None else list(markers)
+        if self._traces:
+            self._redraw()
 
     def set_traces(self, traces: list[ChronoTrace], missing: int = 0) -> None:
         self._traces = list(traces)
@@ -226,6 +245,12 @@ class ChronographPlot(QWidget):
 
         self._plot.clear()
         self._edge = None
+        if len(plotted) == 1 and (self._windows or self._markers):
+            shift = 0.0
+            if align and plotted[0][0].t1_s is not None:
+                shift = float(plotted[0][0].t1_s)
+            y_top = float(np.max(plotted[0][2])) if plotted[0][2].size else 0.0
+            self._draw_windows(shift, y_top)
         legend = self._plot.plotItem.legend
         if len(plotted) > 1:
             if legend is None:
@@ -259,6 +284,37 @@ class ChronographPlot(QWidget):
             self._edge.sigPositionChangeFinished.connect(self._on_edge_finished)
             self._plot.addItem(self._edge)
         self._stack.setCurrentWidget(self._plot)
+
+    def _draw_windows(self, shift: float, y_top: float) -> None:
+        for label, t0, t1, role in self._windows:
+            color = _REGION_COLOR.get(role, (127, 127, 127))
+            brush = pg.mkBrush(*color, 50)
+            pen = pg.mkPen(color, width=1)
+            region = pg.LinearRegionItem(
+                values=(t0 - shift, t1 - shift),
+                orientation="vertical",
+                movable=False,
+                brush=brush,
+                pen=pen,
+                hoverBrush=brush,
+                hoverPen=pen,
+            )
+            region.setZValue(-10)
+            self._plot.addItem(region)
+            text = pg.TextItem(label, color=color, anchor=(0.5, 0))
+            text.setPos((t0 + t1) / 2.0 - shift, y_top)
+            text.setZValue(10)
+            self._plot.addItem(text)
+        for label, time_s in self._markers:
+            line = pg.InfiniteLine(
+                pos=time_s - shift,
+                angle=90,
+                movable=False,
+                pen=pg.mkPen("#555555", width=1, style=Qt.PenStyle.DashLine),
+                label=label,
+                labelOpts={"position": 0.08, "color": "#555555"},
+            )
+            self._plot.addItem(line)
 
     def _on_edge_finished(self, *_args: object) -> None:
         if self._edge is None or len(self._traces) != 1:

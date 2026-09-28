@@ -23,4 +23,6 @@ python3 Measurements/Videos/Analysis_scripts/extract_brightness.py Measurements/
 
 Pass `--force` to decode again. A fresh cache is skipped. The sidecar does not set tube or current on/off times. **Extract** in Video Analysis runs the same command for the campaign you are viewing.
 
-Movies and plots are not committed. Chronograph CSVs are. JSON sidecars under `data/` stay on this machine.
+**Run as solenoid measurement** writes `cycle.json` for that campaign only. Times are seconds from the start of the clip: tube on, current on, current off, tube off. Tube on starts from the detected rising edge when the clip has one. Per-clip fields override the campaign; an empty clip field keeps the campaign value. **3 s cycle** sets, from tube on, current on at +3 s, current off at +6 s, and tube off at +9 s. The chronograph then marks current off, current on, and current off again, and reports the mean intensity in each window (0.3 s in from each edge) and current-on minus the first current-off. **Off / on frames** averages up to 0.7 s in the middle of those two windows and shows the frames plus X and Y projections. It decodes only those stretches. When tube on is later than 0.05 s, a 1 s dark frame before tube on is subtracted.
+
+Movies and plots are not committed. Chronograph CSVs and `cycle.json` are. JSON sidecars under `data/` stay on this machine.

@@ -1,7 +1,8 @@
-"""Video Analysis: play clips and plot intensity chronographs."""
+"""Video Analysis: play clips, plot intensity chronographs, and optionally mark a solenoid cycle."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,11 +10,13 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QSplitter
 
-from lib.paths import list_video_clips, videos_dir
+from lib.paths import list_video_clips, video_campaign_dir, videos_dir
 
 from ..campaign_import import load_video_module
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
 from ..widgets.chronograph import ChronoTrace, ChronographPlot, read_chronograph
+from ..widgets.solenoid_frames import SolenoidFramesDialog, pack_frames
+from ..widgets.solenoid_panel import SolenoidPanel
 from ..widgets.video_browser import VideoBrowser
 from ..widgets.video_player import VideoPlayer
 from ..window import AnalysisWindow
@@ -64,11 +67,20 @@ def _extract_campaign(campaign: str, progress: _ExtractProgress) -> dict[str, An
     return {"campaign": campaign, "clips": done}
 
 
+def _sample_frames(video: str, times: dict[str, Any]) -> dict[str, Any]:
+    solenoid = load_video_module("solenoid")
+    return pack_frames(solenoid.sample_windows(Path(video), times))
+
+
 class VideoAnalysisWindow(AnalysisWindow):
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._loaded: Path | None = None
         self._extracting = False
         self._extract_worker = WorkerHandle()
+        self._frame_worker = WorkerHandle()
+        self._sampling = False
+        self._frame_generation = 0
+        self._solenoid_key: tuple[str | None, str | None] | None = None
         super().__init__(spec, controller)
         self._extract_progress = _ExtractProgress(self)
         self._extract_progress.advanced.connect(self._on_extract_progress)
@@ -92,13 +104,21 @@ class VideoAnalysisWindow(AnalysisWindow):
         self._chrono = ChronographPlot()
         self._chrono.extract_requested.connect(self._extract_current_campaign)
         self._chrono.edge_moved.connect(self._on_edge_moved)
+        self._solenoid = SolenoidPanel()
+        self._solenoid.enable_requested.connect(self._enable_solenoid)
+        self._solenoid.disable_requested.connect(self._disable_solenoid)
+        self._solenoid.times_edited.connect(self._on_solenoid_edited)
+        self._solenoid.frames_requested.connect(self._on_frames)
+        self._solenoid.status_message.connect(self.statusBar().showMessage)
 
         right = QSplitter(Qt.Orientation.Vertical)
         right.addWidget(self._player)
+        right.addWidget(self._solenoid)
         right.addWidget(self._chrono)
-        right.setStretchFactor(0, 1)
-        right.setStretchFactor(1, 1)
-        right.setSizes([420, 360])
+        right.setStretchFactor(0, 2)
+        right.setStretchFactor(1, 0)
+        right.setStretchFactor(2, 2)
+        right.setSizes([340, 230, 290])
 
         splitter = QSplitter()
         splitter.addWidget(self._browser)
@@ -110,6 +130,7 @@ class VideoAnalysisWindow(AnalysisWindow):
 
     def _refresh_catalogue(self) -> None:
         self._loaded = None
+        self._solenoid_key = None
         self._browser.refresh()
         if self._browser.current_clip() is None:
             self._show_idle()
@@ -121,6 +142,7 @@ class VideoAnalysisWindow(AnalysisWindow):
 
     def _on_clip(self, path: Path | None) -> None:
         self._chrono.set_campaign(self._browser.current_campaign())
+        self._sync_solenoid()
         if path is None:
             self._loaded = None
             self._show_idle()
@@ -136,6 +158,7 @@ class VideoAnalysisWindow(AnalysisWindow):
 
     def _show_idle(self) -> None:
         self._chrono.set_campaign(self._browser.current_campaign())
+        self._sync_solenoid()
         if self._browser.has_campaigns():
             self._player.show_message(_SELECT_CLIP)
             self._update_plot()
@@ -148,6 +171,7 @@ class VideoAnalysisWindow(AnalysisWindow):
             f"Create a folder under {root}/<campaign>/ and put MP4 or MOV files "
             "directly in it, then choose File → Refresh videos."
         )
+        self._chrono.set_windows([], [])
         self._chrono.show_message("Add a campaign folder to plot chronographs.")
         self.statusBar().showMessage("No video campaigns")
 
@@ -180,10 +204,14 @@ class VideoAnalysisWindow(AnalysisWindow):
                     t1_s=dataset.rising_edge_s(clip),
                 )
             )
+        windows, markers = self._solenoid_marks()
         if not traces and missing == 0:
+            self._chrono.set_windows([], [])
             self._chrono.show_message("Select a clip to plot its chronograph.")
-            return
-        self._chrono.set_traces(traces, missing=missing)
+        else:
+            self._chrono.set_windows(windows, markers)
+            self._chrono.set_traces(traces, missing=missing)
+        self._apply_solenoid_readout()
 
     def _extract_current_campaign(self) -> None:
         campaign = self._browser.current_campaign()
@@ -232,12 +260,205 @@ class VideoAnalysisWindow(AnalysisWindow):
         except (OSError, ValueError) as exc:
             self.statusBar().showMessage(str(exc))
             return
+        self._solenoid.set_rising_edge(t1_s)
         self.statusBar().showMessage(f"{clip.name}: rising edge {t1_s:.4g} s")
 
+    def _sync_solenoid(self, *, force: bool = False) -> None:
+        campaign = self._browser.current_campaign()
+        clip = self._browser.current_clip()
+        stem = None if clip is None else clip.stem
+        key = (campaign, stem)
+        if not force and key == self._solenoid_key:
+            return
+        self._solenoid_key = key
+        cycle = None
+        if campaign:
+            try:
+                cycle = load_video_module("solenoid").load_cycle(video_campaign_dir(campaign))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                self.statusBar().showMessage(str(exc))
+        edge = _rising_edge(clip)
+        self._solenoid.set_context(campaign, stem, cycle, edge)
+
+    def _enable_solenoid(self) -> None:
+        campaign = self._browser.current_campaign()
+        if not campaign:
+            return
+        solenoid = load_video_module("solenoid")
+        directory = video_campaign_dir(campaign)
+        try:
+            existing = solenoid.load_cycle(directory)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self.statusBar().showMessage(str(exc))
+            return
+        if existing is None:
+            edge = _rising_edge(self._browser.current_clip())
+            solenoid.save_cycle(directory, solenoid.new_cycle(edge))
+            if edge is None:
+                self.statusBar().showMessage(f"{campaign}: solenoid timing on")
+            else:
+                self.statusBar().showMessage(
+                    f"{campaign}: solenoid timing on, tube on {edge:.4g} s"
+                )
+        self._sync_solenoid(force=True)
+        self._update_plot()
+
+    def _disable_solenoid(self) -> None:
+        campaign = self._browser.current_campaign()
+        if not campaign:
+            return
+        load_video_module("solenoid").delete_cycle(video_campaign_dir(campaign))
+        self.statusBar().showMessage(f"{campaign}: solenoid timing removed")
+        self._sync_solenoid(force=True)
+        self._update_plot()
+
+    def _on_solenoid_edited(self, clip_stem: object, times: dict[str, Any]) -> None:
+        campaign = self._browser.current_campaign()
+        if not campaign:
+            return
+        try:
+            load_video_module("solenoid").write_scope(
+                video_campaign_dir(campaign),
+                times,
+                clip_stem=None if clip_stem is None else str(clip_stem),
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self.statusBar().showMessage(str(exc))
+            return
+        self._update_plot()
+
+    def _solenoid_marks(
+        self,
+    ) -> tuple[list[tuple[str, float, float, str]], list[tuple[str, float]]]:
+        clips = self._clips_to_plot()
+        if len(clips) != 1:
+            return [], []
+        solenoid = load_video_module("solenoid")
+        try:
+            cycle = solenoid.load_cycle(clips[0].parent)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return [], []
+        if cycle is None:
+            return [], []
+        return solenoid.plot_marks(solenoid.resolved_times(cycle, clips[0].stem))
+
+    def _apply_solenoid_readout(self) -> None:
+        solenoid = load_video_module("solenoid")
+        campaign = self._browser.current_campaign()
+        clip = self._browser.current_clip()
+        self._solenoid.set_rising_edge(_rising_edge(clip))
+        if not campaign or clip is None:
+            self._solenoid.set_summary("")
+            self._solenoid.set_frames_enabled(False)
+            return
+        try:
+            cycle = solenoid.load_cycle(video_campaign_dir(campaign))
+        except (OSError, ValueError, json.JSONDecodeError):
+            self._solenoid.set_summary("")
+            self._solenoid.set_frames_enabled(False)
+            return
+        if cycle is None:
+            self._solenoid.set_summary("")
+            self._solenoid.set_frames_enabled(False)
+            return
+        times = solenoid.resolved_times(cycle, clip.stem)
+        time_s, intensity = _chronograph_arrays(clip)
+        text = solenoid.intensity_summary(time_s, intensity, times)
+        if time_s is None and text:
+            text += "\nExtract a chronograph to compute window means."
+        if len(self._clips_to_plot()) > 1 and text:
+            text = "Bands are drawn when one clip is plotted.\n" + text
+        self._solenoid.set_summary(text)
+        self._solenoid.set_frames_enabled(_has_current_windows(solenoid, times))
+
+    def _on_frames(self) -> None:
+        if self._sampling or not self._solenoid.commit():
+            return
+        clip = self._browser.current_clip()
+        if clip is None:
+            return
+        solenoid = load_video_module("solenoid")
+        try:
+            cycle = solenoid.load_cycle(clip.parent)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self.statusBar().showMessage(str(exc))
+            return
+        if cycle is None:
+            return
+        times = solenoid.resolved_times(cycle, clip.stem)
+        if not _has_current_windows(solenoid, times):
+            self.statusBar().showMessage(
+                "Set tube on, current on, and current off before reading frames."
+            )
+            return
+        self._frame_generation += 1
+        generation = self._frame_generation
+        self._sampling = True
+        self._solenoid.set_frames_busy(True)
+        self.statusBar().showMessage(f"Reading frames in {clip.name}")
+        self._frame_worker.start(
+            _sample_frames,
+            str(clip),
+            times,
+            on_finished=lambda result, generation=generation, clip=clip: self._on_frames_ready(
+                generation, clip, result
+            ),
+            on_failed=lambda message, generation=generation: self._on_frames_failed(
+                generation, message
+            ),
+        )
+
+    def _on_frames_ready(self, generation: int, clip: Path, result: object) -> None:
+        if generation != self._frame_generation:
+            return
+        self._sampling = False
+        self._solenoid.set_frames_busy(False)
+        self._apply_solenoid_readout()
+        if not isinstance(result, dict):
+            return
+        self._frames_dialog = SolenoidFramesDialog(clip.name, result, self)
+        self._frames_dialog.show()
+        self.statusBar().showMessage(f"{clip.name}: off / on frames")
+
+    def _on_frames_failed(self, generation: int, message: str) -> None:
+        if generation != self._frame_generation:
+            return
+        self._sampling = False
+        self._solenoid.set_frames_busy(False)
+        self._apply_solenoid_readout()
+        self.statusBar().showMessage(message)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._frame_generation += 1
         self._extract_worker.cancel()
+        self._frame_worker.cancel()
         self._player.stop()
         super().closeEvent(event)
+
+
+def _chronograph_arrays(clip: Path) -> tuple[Any, Any]:
+    dataset = load_video_module("dataset")
+    csv_path, _meta_path = dataset.video_to_cache(clip)
+    if not csv_path.is_file():
+        return None, None
+    try:
+        return read_chronograph(csv_path)
+    except (OSError, RuntimeError, ValueError):
+        return None, None
+
+
+def _rising_edge(clip: Path | None) -> float | None:
+    if clip is None:
+        return None
+    try:
+        return load_video_module("dataset").rising_edge_s(clip)
+    except (OSError, ValueError):
+        return None
+
+
+def _has_current_windows(solenoid: Any, times: dict[str, Any]) -> bool:
+    roles = {window.role for window in solenoid.phase_windows(times)}
+    return "off" in roles and "on" in roles
 
 
 def _create_window(controller: Any) -> VideoAnalysisWindow:
@@ -250,7 +471,8 @@ register(
         title="Video Analysis",
         description=(
             "Play clips under Measurements/Videos and plot intensity chronographs. "
-            "Overlay several clips, aligned on the rising edge or in raw time."
+            "Overlay several clips, aligned on the rising edge or in raw time. "
+            "A campaign can be run as a solenoid measurement with editable tube and current times."
         ),
         family=FAMILY_ANALYSIS,
         window_factory=_create_window,

@@ -34,6 +34,20 @@ def load_video_module(module: str) -> ModuleType:
     return _load_module(path, f"dvorak_video_{module}")
 
 
+def load_spectrum_module(module: str) -> ModuleType:
+    """Load a module from ``Measurements/X123_Spectra/Analysis_scripts``."""
+    from lib.paths import spectrum_scripts_dir
+
+    directory = spectrum_scripts_dir()
+    directory_s = str(directory)
+    if directory_s not in sys.path:
+        sys.path.insert(0, directory_s)
+    path = directory / f"{module}.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"No {module}.py in {path.parent}")
+    return _load_module(path, f"dvorak_spectrum_{module}")
+
+
 def _load_module(path, key: str) -> ModuleType:
     existing = sys.modules.get(key)
     if existing is not None:

@@ -35,12 +35,14 @@ New lab captures land on **master**. On this branch:
 python tools/sync_measurements.py
 ```
 
-That fetches `origin` and checks out each campaign `Data/` folder from
-`origin/master`. NPZ and JSON are tracked in git; PNG, PDF, MP4, and MOV stay
-gitignored. The script refuses to run if those paths have local changes.
-`--all` replaces the entire `Measurements/` tree (including
-`Analysis_scripts`) and removes files that are not on that ref.
-`--dry-run` prints the diff only.
+That fetches `origin`, commits any GUI analysis artifacts under
+`Data/plots/` (CSV, JSON, METRICS.md, `root_figures.json`), then checks out
+only the raw campaign `Data/` files from `origin/master`. Plot outputs stay
+on this branch; PNG, PDF, MP4, and MOV stay gitignored. Dirty raw captures
+that do not already match the ref still block the run. `--no-commit` skips
+the analysis commit. `--all` also updates `Analysis_scripts` and the rest of
+`Measurements/`, but still leaves `Data/plots/` alone. `--dry-run` prints
+both steps without changing files.
 
 ## Analyses
 
@@ -73,8 +75,20 @@ Select a clip to play it and plot intensity versus time. Drag the green
 rising-edge line to correct it. Shift-click or Command-click overlays those
 clips, in raw time or aligned on each rising edge, as absolute intensity or
 each trace divided by its own max. **Extract** decodes the current campaign
-in the background. Bench captures in `Measurements/<campaign>/Data/` still
-show up in the other analyses' catalogue; this window does not use that list.
+in the background. **Run as solenoid measurement** stores tube and current
+times in that campaign's `cycle.json`, marks them on the chronograph,
+and can show the current-off and current-on frames. Bench captures in
+`Measurements/<campaign>/Data/` still show up in the other analyses'
+catalogue; this window does not use that list.
+
+**X-123 Spectra** lists nested campaigns under
+`Measurements/X123_Spectra/<campaign>/`. Paste Amptek `.mca` files into
+`Data/` (or the campaign folder) and **Refresh**. Energy calibration is
+applied on load from `calibration/energy.json`. Shift/Command-click overlays
+spectra from any campaign. The plot has log Y, counts or cps or normalize,
+a moving average (channels or keV), ROI stats, ΔE cursors, U L / common
+line markers, a mean ± std band by phase, and difference vs a reference.
+**File → Export plot…** writes a PNG of the current view.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,
