@@ -31,7 +31,6 @@ from ..campaign_import import load_campaign_module
 from ..catalog import CaptureRecord, scan
 from ..kinds import KIND_WAVEFORM
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, Option, get, register
-from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.figure_gallery import open_local_path, reveal_in_folder
 from ..widgets.param_form import ParamForm
 from ..widgets.spark_explorer import ComposePane, SparkExplorer
@@ -166,10 +165,7 @@ def _run_full_analysis(
     metadata: dict[str, Any],
     run: dict[str, Any],
 ) -> dict[str, Any]:
-    """Write the CLI figure pack. Load matplotlib Agg only on this thread."""
-    import matplotlib
-
-    matplotlib.use("Agg", force=True)
+    """Write the CLI figure pack. Figures use an Agg canvas, not the Qt backend."""
     report = load_campaign_module(CAMPAIGN_SPARK_GAP, "spark_gap_report")
     result = report.run_analysis(
         npz_path,
@@ -412,7 +408,6 @@ class SparkGapWindow(AnalysisWindow):
         self._load_worker = WorkerHandle()
         self._detect_worker = WorkerHandle()
         self._analysis_worker = WorkerHandle()
-        self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._time_s = None
         self._voltage_v = None
@@ -503,11 +498,8 @@ class SparkGapWindow(AnalysisWindow):
 
         self._plot = TracePlot()
         self._plot.status_changed.connect(self._on_plot_status)
-        self._plot.legacy_root_requested.connect(self._open_legacy_root)
-        self._plot.pdf_requested.connect(self._export_pdf)
-
-        self._explorer = SparkExplorer(self._controller.root)
-        self._compose = ComposePane(self._controller.root)
+        self._explorer = SparkExplorer()
+        self._compose = ComposePane()
         self._compose.set_event_loader(load_analysis_events)
         self._compose.refresh_requested.connect(self._refresh_compose)
         self._events_table = QTableWidget(0, len(_sg.CSV_COLUMNS))
@@ -838,47 +830,6 @@ class SparkGapWindow(AnalysisWindow):
         if self._plot is not None:
             self._plot.reset_view()
 
-    def _overview_spec(self):
-        if self._plot is None:
-            return None
-        name = "01_overview"
-        if self._chosen is not None:
-            name = f"01_overview_{self._chosen.stem}"
-        return self._plot.publication_spec(name)
-
-    def _open_legacy_root(self) -> None:
-        spec = self._overview_spec()
-        if spec is None:
-            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
-            return
-        open_in_legacy_root(
-            self,
-            self._controller.root,
-            self._export_worker,
-            spec,
-            on_status=self.statusBar().showMessage,
-        )
-
-    def _export_pdf(self) -> None:
-        spec = self._overview_spec()
-        if spec is None:
-            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
-            return
-        if self._out_dir is not None:
-            default = self._out_dir / "01_overview.pdf"
-        elif self._chosen is not None:
-            default = self._chosen.path.parent / "plots" / f"{self._chosen.stem}.pdf"
-        else:
-            default = Path("01_overview.pdf")
-        save_pdf(
-            self,
-            self._controller.root,
-            self._export_worker,
-            spec,
-            default,
-            on_status=self.statusBar().showMessage,
-        )
-
     def _save_recipe(self) -> None:
         if self._form is None:
             return
@@ -921,7 +872,6 @@ class SparkGapWindow(AnalysisWindow):
         self._load_worker.cancel()
         self._detect_worker.cancel()
         self._analysis_worker.cancel()
-        self._export_worker.cancel()
         if self._explorer is not None:
             self._explorer.shutdown()
         if self._compose is not None:

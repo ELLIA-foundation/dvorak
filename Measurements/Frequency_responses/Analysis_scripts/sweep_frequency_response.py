@@ -14,6 +14,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 
 for _parent in Path(__file__).resolve().parents:
     if (_parent / "lib" / "paths.py").is_file() and (_parent / "Measurements").is_dir():
@@ -144,7 +146,12 @@ def _plot(rows: list[dict], output_path: Path, scope_bw_hz: float, show: bool) -
     v_scope = np.asarray([row["v_scope_vpp"] for row in rows], dtype=float)
     limited = np.asarray([row["scope_limited"] for row in rows], dtype=bool)
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 7.2), sharex=True)
+    if show:
+        fig, axes = plt.subplots(2, 1, figsize=(10, 7.2), sharex=True)
+    else:
+        fig = Figure(figsize=(10, 7.2))
+        FigureCanvasAgg(fig)
+        axes = fig.subplots(2, 1, sharex=True)
     ax_db, ax_v = axes
     ax_db.semilogx(freq, ratio_db, "-o", color="#1f77b4", markersize=4, label="20 log10(V_scope / V_nominal)")
     if limited.any():
@@ -169,7 +176,7 @@ def _plot(rows: list[dict], output_path: Path, scope_bw_hz: float, show: bool) -
     if show:
         plt.show()
     else:
-        plt.close(fig)
+        fig.clear()
 
 
 def run_sweep(
@@ -262,7 +269,19 @@ def run_sweep(
     }
 
 
-def main() -> None:
+def save_sweep(payload: dict, *, show: bool = False) -> dict[str, Path]:
+    """Write the CSV, JSON, and PNG the CLI writes. Returns those paths."""
+    stem = _run_stem(payload.get("run_name"))
+    data_dir = campaign_data(CAMPAIGN_FREQUENCY_RESPONSES)
+    plots_dir = campaign_plots(CAMPAIGN_FREQUENCY_RESPONSES)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = data_dir / f"{stem}.csv"
+    json_path = data_dir / f"{stem}.json"
+    plot_path = plots_dir / f"{stem}.png"
+    _write_csv(csv_path, payload["rows"])
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _plot(payload["rows"], plot_path, float(payload["scope_bw_hz"]), show=show)
+    return {"csv": csv_path, "json": json_path, "png": plot_path}
     parser = argparse.ArgumentParser(
         description="Log-sweep a sine and record V_scope / V_nominal into Frequency_responses/Data."
     )
@@ -335,19 +354,10 @@ def main() -> None:
         scope_model=args.scope,
     )
     payload["run_name"] = args.name.strip() if args.name and str(args.name).strip() else None
-    stem = _run_stem(payload["run_name"])
-    data_dir = campaign_data(CAMPAIGN_FREQUENCY_RESPONSES)
-    plots_dir = campaign_plots(CAMPAIGN_FREQUENCY_RESPONSES)
-    data_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = data_dir / f"{stem}.csv"
-    json_path = data_dir / f"{stem}.json"
-    plot_path = plots_dir / f"{stem}.png"
-    _write_csv(csv_path, payload["rows"])
-    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    _plot(payload["rows"], plot_path, args.scope_bw, show=not args.no_show)
-    print(f"\nWrote {csv_path}")
-    print(f"Wrote {json_path}")
-    print(f"Wrote {plot_path}")
+    paths = save_sweep(payload, show=not args.no_show)
+    print(f"\nWrote {paths['csv']}")
+    print(f"Wrote {paths['json']}")
+    print(f"Wrote {paths['png']}")
 
 
 if __name__ == "__main__":

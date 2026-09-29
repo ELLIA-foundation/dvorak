@@ -1,7 +1,6 @@
 """Frequency-response figure spec shared by the GUI and the sweep script.
 
-No instrument or ROOT imports: the GUI sends the spec to the renderer, and the
-sweep script can do the same when ROOT is installed.
+No instrument imports. The GUI draws the spec with matplotlib.
 """
 
 from __future__ import annotations

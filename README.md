@@ -8,6 +8,7 @@ analysis plus data.
 
 ```
 lib/                  Shared path helpers, waveform NPZ I/O, video sidecar I/O
+gui/                  Analysis and measurement GUI (PySide6; no ROOT)
 instruments/          Hardware by role, then model
   lab.json            Which model is on the bench, plus IPs
   oscilloscope.py     Oscilloscope ABC
@@ -39,6 +40,18 @@ pip install -r requirements.txt
 
 Python 3.12+. Edit `instruments/lab.json` so the `oscilloscope` / `generator`
 roles match the hardware on the network.
+
+## Analysis and measurement GUI
+
+```powershell
+gui\bootstrap.cmd
+gui\run.cmd
+```
+
+The GUI browses `Measurements/`, runs spark-gap and frequency analysis without
+ROOT, and starts a capture only after the instrument `identify()` call succeeds.
+ffmpeg must be on `PATH` for video extract and preview frames. The NDI runtime
+is required only for the camera. See [gui/README.md](gui/README.md).
 
 ## Usage
 

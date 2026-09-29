@@ -14,7 +14,11 @@ from types import ModuleType
 def load_campaign_module(campaign: str, module: str) -> ModuleType:
     from lib.paths import campaign_scripts
 
-    path = campaign_scripts(campaign) / f"{module}.py"
+    directory = campaign_scripts(campaign)
+    directory_s = str(directory)
+    if directory_s not in sys.path:
+        sys.path.insert(0, directory_s)
+    path = directory / f"{module}.py"
     if not path.is_file():
         raise FileNotFoundError(f"No {module}.py in {campaign} Analysis_scripts ({path})")
     return _load_module(path, f"dvorak_campaign_{campaign}_{module}")

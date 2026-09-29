@@ -69,8 +69,6 @@ class TracePlot(QWidget):
     """Plot ``time_s`` / ``voltage_v`` with viewport-aware min-max decimation."""
 
     status_changed = Signal(str)
-    legacy_root_requested = Signal()
-    pdf_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -109,7 +107,6 @@ class TracePlot(QWidget):
         self._place_cursors(t0 + 0.25 * span, t0 + 0.75 * span)
         self._rebuild_lod()
         self._update_time_label()
-        self._set_export_enabled(True)
 
     def clear_waveform(self) -> None:
         self.clear_events()
@@ -117,7 +114,6 @@ class TracePlot(QWidget):
         self._voltage_v = None
         self._curve.setData([], [])
         self._hover.setText("Open a waveform to plot.")
-        self._set_export_enabled(False)
         self.status_changed.emit("")
 
     def clear_events(self) -> None:
@@ -284,10 +280,6 @@ class TracePlot(QWidget):
             "panels": [panel],
         }
 
-    def _set_export_enabled(self, enabled: bool) -> None:
-        self._legacy_btn.setEnabled(enabled)
-        self._pdf_btn.setEnabled(enabled)
-
     def _build(self) -> None:
         pg.setConfigOptions(antialias=False, foreground="d")
         self._plot = pg.PlotWidget(
@@ -338,20 +330,9 @@ class TracePlot(QWidget):
         reset_btn.clicked.connect(self.reset_view)
         self._cursors = QCheckBox("Cursors")
         self._cursors.toggled.connect(self._toggle_cursors)
-        self._legacy_btn = QPushButton("Legacy ROOT")
-        self._legacy_btn.setToolTip(
-            "Open the current view in the interactive ROOT GUI (root -l)"
-        )
-        self._legacy_btn.clicked.connect(self.legacy_root_requested.emit)
-        self._pdf_btn = QPushButton("Save PDF…")
-        self._pdf_btn.setToolTip("Write the current view as a ROOT PDF")
-        self._pdf_btn.clicked.connect(self.pdf_requested.emit)
-        self._set_export_enabled(False)
         toolbar = QHBoxLayout()
         toolbar.addWidget(self._hover, stretch=1)
         toolbar.addWidget(self._cursors)
-        toolbar.addWidget(self._legacy_btn)
-        toolbar.addWidget(self._pdf_btn)
         toolbar.addWidget(reset_btn)
 
         layout = QVBoxLayout(self)

@@ -6,6 +6,7 @@ instruments or PyVISA here.
 
 from __future__ import annotations
 
+import contextvars
 import csv
 import json
 import shutil
@@ -15,7 +16,11 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
+
+_USE_AGG = contextvars.ContextVar("spark_gap_report_agg", default=False)
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -110,6 +115,24 @@ def _apply_layout(fig) -> None:
     fig.tight_layout(rect=(0, 0.05, 1, 1))
 
 
+def _subplots(nrows: int = 1, ncols: int = 1, *, figsize, sharex: bool = False, squeeze: bool = True):
+    """CLI preview uses pyplot. Headless writes use an Agg canvas so Qt stays put."""
+    if not _USE_AGG.get():
+        return plt.subplots(nrows, ncols, figsize=figsize, sharex=sharex, squeeze=squeeze)
+    fig = Figure(figsize=figsize)
+    FigureCanvasAgg(fig)
+    axes = fig.subplots(nrows, ncols, sharex=sharex, squeeze=squeeze)
+    return fig, axes
+
+
+def _cmap(name: str):
+    if _USE_AGG.get():
+        import matplotlib
+
+        return matplotlib.colormaps[name]
+    return plt.get_cmap(name)
+
+
 def plot_overview(result: AnalysisResult, include_first: bool) -> plt.Figure:
     plot_t, plot_v = decimate_minmax(result.time_s, result.voltage_v, DEFAULT_MAX_POINTS)
     display_t, time_unit = pick_time_scale(plot_t)
@@ -124,7 +147,7 @@ def plot_overview(result: AnalysisResult, include_first: bool) -> plt.Figure:
         t_scale = 1.0
     v_scale = 1e-3 if volt_unit == "kV" else 1.0
 
-    fig, ax = plt.subplots(figsize=(12, 5.2))
+    fig, ax = _subplots(figsize=(12, 5.2))
     ax.plot(display_t, display_v, linewidth=0.8, color="#1f77b4")
     ax.axhline(0.0, color="0.5", linewidth=0.8, linestyle="--")
     for event in result.events:
@@ -169,7 +192,7 @@ def plot_sequential(result: AnalysisResult, include_first: bool) -> plt.Figure:
     )
     first = np.asarray([e.first_cycle for e in events], dtype=bool)
 
-    fig, axes = plt.subplots(3, 1, figsize=(11, 8.2), sharex=False)
+    fig, axes = _subplots(3, 1, figsize=(11, 8.2), sharex=False)
     series = (
         (v_bd, "v_breakdown (kV)", axes[0]),
         (period_us, "period_s (µs)", axes[1]),
@@ -201,7 +224,7 @@ def plot_sequential(result: AnalysisResult, include_first: bool) -> plt.Figure:
 
 def plot_histograms(result: AnalysisResult, include_first: bool) -> plt.Figure:
     pool = typical_events(result.events, include_first)
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.6))
+    fig, axes = _subplots(2, 2, figsize=(11, 7.6))
     panels = (
         (axes[0, 0], np.asarray([e.v_breakdown for e in pool]), 1e-3, "kV", "v_breakdown"),
         (axes[0, 1], np.asarray([e.period_s if e.period_s is not None else np.nan for e in pool]), 1e6, "µs", "period_s"),
@@ -230,8 +253,8 @@ def plot_histograms(result: AnalysisResult, include_first: bool) -> plt.Figure:
 
 def plot_collapse_overlay(result: AnalysisResult, include_first: bool) -> plt.Figure:
     chosen = pick_representatives(result.events, count=5, include_first=include_first)
-    fig, ax = plt.subplots(figsize=(10, 5.6))
-    cmap = plt.get_cmap("tab10")
+    fig, ax = _subplots(figsize=(10, 5.6))
+    cmap = _cmap("tab10")
     for event in chosen:
         t_ns = event.collapse_t_s * 1e9
         ax.plot(
@@ -259,8 +282,8 @@ def plot_collapse_overlay(result: AnalysisResult, include_first: bool) -> plt.Fi
 def plot_collapse_individuals(result: AnalysisResult, include_first: bool) -> plt.Figure:
     chosen = pick_representatives(result.events, count=5, include_first=include_first)
     n = max(1, len(chosen))
-    fig, axes = plt.subplots(n, 1, figsize=(10, 2.15 * n), sharex=True, squeeze=False)
-    cmap = plt.get_cmap("tab10")
+    fig, axes = _subplots(n, 1, figsize=(10, 2.15 * n), sharex=True, squeeze=False)
+    cmap = _cmap("tab10")
     for ax, event in zip(axes[:, 0], chosen):
         t_ns = event.collapse_t_s * 1e9
         ax.plot(t_ns, event.collapse_v / 1000.0, color=_event_color(event, cmap), linewidth=1.0)
@@ -286,8 +309,8 @@ def plot_collapse_individuals(result: AnalysisResult, include_first: bool) -> pl
 
 def plot_ramp_overlay(result: AnalysisResult, include_first: bool) -> plt.Figure:
     pool = typical_events(result.events, include_first)
-    fig, ax = plt.subplots(figsize=(10, 5.6))
-    cmap = plt.get_cmap("tab10")
+    fig, ax = _subplots(figsize=(10, 5.6))
+    cmap = _cmap("tab10")
     for event in pool:
         if len(event.ramp_t_s) == 0:
             continue
@@ -322,7 +345,7 @@ def plot_correlations(result: AnalysisResult, include_first: bool) -> plt.Figure
     v_bd = np.asarray([e.v_breakdown / 1000.0 for e in pool])
     period = np.asarray([e.period_s * 1e6 if e.period_s is not None else np.nan for e in pool])
     rate = np.asarray([e.charge_rate / 1e6 if e.charge_rate is not None else np.nan for e in pool])
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8))
+    fig, axes = _subplots(1, 2, figsize=(11, 4.8))
     pairs = (
         (axes[0], period, "period_s (µs)", result.summary.get("corr_vbd_period"), "corr_vbd_period"),
         (axes[1], rate, "charge_rate (kV/ms)", result.summary.get("corr_vbd_charge_rate"), "corr_vbd_charge_rate"),
@@ -342,8 +365,8 @@ def plot_correlations(result: AnalysisResult, include_first: bool) -> plt.Figure
 
 def plot_post_collapse(result: AnalysisResult, include_first: bool) -> plt.Figure:
     chosen = pick_representatives(result.events, count=5, include_first=include_first)
-    fig, ax = plt.subplots(figsize=(10, 5.6))
-    cmap = plt.get_cmap("tab10")
+    fig, ax = _subplots(figsize=(10, 5.6))
+    cmap = _cmap("tab10")
     for event in chosen:
         ax.plot(
             event.post_t_s * 1e9,
@@ -481,19 +504,22 @@ def save_figures(
     saved: list[Path] = []
     pdf_path = out_dir / "analysis.pdf"
     figures: list[plt.Figure] = []
-    for name, builder in FIGURE_BUILDERS:
-        fig = builder(result, include_first)
-        png_path = out_dir / f"{name}.png"
-        fig.savefig(png_path, dpi=FIGURE_DPI)
-        saved.append(png_path)
-        figures.append(fig)
-    with PdfPages(pdf_path) as pdf:
-        for fig in figures:
-            pdf.savefig(fig)
+    token = _USE_AGG.set(not show)
+    try:
+        for name, builder in FIGURE_BUILDERS:
+            fig = builder(result, include_first)
+            png_path = out_dir / f"{name}.png"
+            fig.savefig(png_path, dpi=FIGURE_DPI)
+            saved.append(png_path)
+            figures.append(fig)
+        with PdfPages(pdf_path) as pdf:
+            for fig in figures:
+                pdf.savefig(fig)
+    finally:
+        _USE_AGG.reset(token)
     saved.append(pdf_path)
     if show:
         plt.show()
-    else:
         for fig in figures:
             plt.close(fig)
     return saved

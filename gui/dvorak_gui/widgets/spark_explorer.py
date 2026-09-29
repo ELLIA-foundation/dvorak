@@ -1,4 +1,4 @@
-"""Interactive spark-gap metric and overlay panes on a ROOT canvas."""
+"""Interactive spark-gap metric and overlay panes on a matplotlib canvas."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
 from lib.paths import CAMPAIGN_SPARK_GAP
 
 from ..campaign_import import load_campaign_module
-from ..rootbridge import RootBridge
-from .root_gallery import RootCanvas, RootGallery
+from .figure_gallery import FigureGallery
+from .spec_canvas import SpecCanvas
 
 _sg = load_campaign_module(CAMPAIGN_SPARK_GAP, "spark_gap")
 sys.modules.setdefault("spark_gap", _sg)
@@ -39,7 +39,7 @@ _KIND_POST = "post"
 
 
 class MetricsPane(QWidget):
-    def __init__(self, bridge: RootBridge, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._events: list[dict[str, Any]] = []
         self._detection: dict[str, Any] = {}
@@ -64,7 +64,7 @@ class MetricsPane(QWidget):
         self._list = QListWidget()
         self._list.itemChanged.connect(self._redraw)
 
-        self._canvas = RootCanvas(bridge, self, empty="Detect events to plot metrics.")
+        self._canvas = SpecCanvas(self, empty="Detect events to plot metrics.")
 
         controls = QVBoxLayout()
         controls.addWidget(QLabel("Mode"))
@@ -150,7 +150,7 @@ class MetricsPane(QWidget):
 
 
 class OverlayPane(QWidget):
-    def __init__(self, bridge: RootBridge, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._events: list[dict[str, Any]] = []
         self._snippets: list[dict[str, Any]] = []
@@ -188,9 +188,7 @@ class OverlayPane(QWidget):
         picks.addWidget(all_btn)
         picks.addWidget(none_btn)
 
-        self._canvas = RootCanvas(
-            bridge, self, empty="Detect events to overlay waveforms."
-        )
+        self._canvas = SpecCanvas(self, empty="Detect events to overlay waveforms.")
 
         controls = QVBoxLayout()
         controls.addWidget(QLabel("Waveform"))
@@ -336,7 +334,7 @@ class ComposePane(QWidget):
 
     refresh_requested = Signal()
 
-    def __init__(self, bridge: RootBridge, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._loader = None
         self._records: list[Any] = []
@@ -381,9 +379,7 @@ class ComposePane(QWidget):
         self._note.setWordWrap(True)
         self._note.setStyleSheet("color: palette(mid);")
 
-        self._canvas = RootCanvas(
-            bridge, self, empty="Select measurements and a metric."
-        )
+        self._canvas = SpecCanvas(self, empty="Select measurements and a metric.")
 
         controls = QVBoxLayout()
         controls.addWidget(QLabel("Measurements"))
@@ -578,14 +574,41 @@ class ComposePane(QWidget):
         self._canvas.set_spec(spec)
 
 
+class SavedFigures(QWidget):
+    """PNG pack written by the spark-gap report (figures 02–08)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._pngs: list[tuple[str, Path]] = []
+        self._gallery = FigureGallery(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._gallery)
+
+    def shutdown(self) -> None:
+        return
+
+    def clear(self) -> None:
+        self._pngs = []
+        self._gallery.clear()
+
+    def count(self) -> int:
+        return len(self._pngs)
+
+    def set_content(self, specs: list[dict] | None, pngs: list[tuple[str, Path]]) -> None:
+        del specs
+        self._pngs = list(pngs)
+        self._gallery.set_figures(self._pngs)
+
+
 class SparkExplorer(QWidget):
     """Metrics, overlay, and the saved 02–08 figure pack."""
 
-    def __init__(self, bridge: RootBridge, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.metrics = MetricsPane(bridge, self)
-        self.overlay = OverlayPane(bridge, self)
-        self.gallery = RootGallery(bridge, self)
+        self.metrics = MetricsPane(self)
+        self.overlay = OverlayPane(self)
+        self.gallery = SavedFigures(self)
         self._tabs = QTabWidget()
         self._tabs.addTab(self.metrics, "Metrics")
         self._tabs.addTab(self.overlay, "Overlay")

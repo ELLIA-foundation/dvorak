@@ -1,7 +1,7 @@
-"""Drawing-ready figure specs for the ROOT renderer.
+"""Drawing-ready figure specs for the matplotlib canvas.
 
 Mirrors the matplotlib pack in ``spark_gap_report`` (figures 02–08). Arrays are
-plain lists so the GUI can ship them to a ROOT process without importing ROOT.
+plain lists so the GUI can draw them without a plotting library of its own.
 """
 
 from __future__ import annotations
