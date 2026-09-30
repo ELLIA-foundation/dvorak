@@ -32,6 +32,7 @@ class CaptureRecord:
     kind: str
     campaign: str
     stem: str
+    session: str | None = None
     captured_at: str | None = None
     run_name: str | None = None
     points: int | None = None
@@ -44,10 +45,15 @@ class CaptureRecord:
     def kind_label(self) -> str:
         return kind_label(self.kind)
 
+    @property
+    def display_name(self) -> str:
+        return self.run_name or self.stem
+
     def search_haystack(self) -> str:
         parts: list[str] = [
             self.stem,
             self.campaign,
+            self.session or "",
             self.kind,
             self.kind_label,
             str(self.path),
@@ -99,9 +105,17 @@ def scan(data_root: Path) -> list[CaptureRecord]:
 
 
 def _looks_like_data_dir(path: Path) -> bool:
-    return any(path.glob("waveform_*.npz")) or any(path.glob("video_*.json")) or any(
+    if not path.is_dir():
+        return False
+    if any(path.glob("waveform_*.npz")) or any(path.glob("video_*.json")) or any(
         path.glob("*.csv")
-    )
+    ):
+        return True
+    for child in path.iterdir():
+        if child.is_dir() and not child.name.startswith(".") and child.name.lower() != "plots":
+            if any(child.glob("waveform_*.npz")):
+                return True
+    return False
 
 
 def _scan_data_dir(campaign: str, data_dir: Path) -> list[CaptureRecord]:
@@ -109,40 +123,51 @@ def _scan_data_dir(campaign: str, data_dir: Path) -> list[CaptureRecord]:
     table_stems: set[str] = set()
     video_stems: set[str] = set()
 
-    for npz_path in sorted(data_dir.glob("waveform_*.npz")):
-        records.append(_from_waveform(campaign, npz_path))
+    folders = [data_dir]
+    for child in sorted(data_dir.iterdir()):
+        if (
+            child.is_dir()
+            and not child.name.startswith(".")
+            and child.name.lower() != "plots"
+        ):
+            folders.append(child)
 
-    for json_path in sorted(data_dir.glob("video_*.json")):
-        records.append(_from_video_json(campaign, json_path))
-        video_stems.add(json_path.stem)
+    for folder in folders:
+        session = None if folder == data_dir else folder.name
+        for npz_path in sorted(folder.glob("waveform_*.npz")):
+            records.append(_from_waveform(campaign, npz_path, session=session))
 
-    for pattern in ("video_*.mp4", "video_*.mov"):
-        for media_path in sorted(data_dir.glob(pattern)):
-            if media_path.stem in video_stems:
+        for json_path in sorted(folder.glob("video_*.json")):
+            records.append(_from_video_json(campaign, json_path, session=session))
+            video_stems.add(json_path.stem)
+
+        for pattern in ("video_*.mp4", "video_*.mov"):
+            for media_path in sorted(folder.glob(pattern)):
+                if media_path.stem in video_stems:
+                    continue
+                records.append(_from_video_media(campaign, media_path, session=session))
+                video_stems.add(media_path.stem)
+
+        for csv_path in sorted(folder.glob("*.csv")):
+            records.append(_from_table(campaign, csv_path, session=session))
+            table_stems.add(csv_path.stem)
+
+        for json_path in sorted(folder.glob("freq_resp_*.json")):
+            if json_path.stem in table_stems:
                 continue
-            records.append(_from_video_media(campaign, media_path))
-            video_stems.add(media_path.stem)
-
-    for csv_path in sorted(data_dir.glob("*.csv")):
-        records.append(_from_table(campaign, csv_path))
-        table_stems.add(csv_path.stem)
-
-    for json_path in sorted(data_dir.glob("freq_resp_*.json")):
-        if json_path.stem in table_stems:
-            continue
-        records.append(_from_table(campaign, json_path))
-        table_stems.add(json_path.stem)
+            records.append(_from_table(campaign, json_path, session=session))
+            table_stems.add(json_path.stem)
 
     records.sort(key=_sort_key)
     return records
 
 
-def _sort_key(record: CaptureRecord) -> tuple[str, str, str]:
+def _sort_key(record: CaptureRecord) -> tuple[str, str, str, str]:
     stamp = record.captured_at or ""
-    return (record.campaign.lower(), stamp, record.stem)
+    return (record.campaign.lower(), (record.session or "").lower(), stamp, record.stem)
 
 
-def _from_waveform(campaign: str, npz_path: Path) -> CaptureRecord:
+def _from_waveform(campaign: str, npz_path: Path, session: str | None = None) -> CaptureRecord:
     sidecar = _sidecar_json(npz_path)
     meta = _read_json(sidecar)
     return CaptureRecord(
@@ -150,6 +175,7 @@ def _from_waveform(campaign: str, npz_path: Path) -> CaptureRecord:
         kind=KIND_WAVEFORM,
         campaign=campaign,
         stem=npz_path.stem,
+        session=session or _as_str(meta.get("session")),
         captured_at=_first(meta.get("captured_at"), meta.get("measured_at")),
         run_name=_as_str(meta.get("run_name")),
         points=_as_int(meta.get("points")),
@@ -160,7 +186,7 @@ def _from_waveform(campaign: str, npz_path: Path) -> CaptureRecord:
     )
 
 
-def _from_video_json(campaign: str, json_path: Path) -> CaptureRecord:
+def _from_video_json(campaign: str, json_path: Path, session: str | None = None) -> CaptureRecord:
     meta = _read_json(json_path)
     media = _video_media_path(json_path, meta)
     return CaptureRecord(
@@ -168,6 +194,7 @@ def _from_video_json(campaign: str, json_path: Path) -> CaptureRecord:
         kind=KIND_VIDEO,
         campaign=campaign,
         stem=json_path.stem,
+        session=session,
         captured_at=_first(meta.get("captured_at"), meta.get("measured_at")),
         run_name=_as_str(meta.get("run_name")),
         points=_as_int(meta.get("frame_count")),
@@ -178,7 +205,7 @@ def _from_video_json(campaign: str, json_path: Path) -> CaptureRecord:
     )
 
 
-def _from_video_media(campaign: str, media_path: Path) -> CaptureRecord:
+def _from_video_media(campaign: str, media_path: Path, session: str | None = None) -> CaptureRecord:
     sidecar = _sidecar_json(media_path)
     meta = _read_json(sidecar)
     return CaptureRecord(
@@ -186,6 +213,7 @@ def _from_video_media(campaign: str, media_path: Path) -> CaptureRecord:
         kind=KIND_VIDEO,
         campaign=campaign,
         stem=media_path.stem,
+        session=session,
         captured_at=_first(meta.get("captured_at"), meta.get("measured_at")),
         run_name=_as_str(meta.get("run_name")),
         points=_as_int(meta.get("frame_count")),
@@ -196,7 +224,7 @@ def _from_video_media(campaign: str, media_path: Path) -> CaptureRecord:
     )
 
 
-def _from_table(campaign: str, path: Path) -> CaptureRecord:
+def _from_table(campaign: str, path: Path, session: str | None = None) -> CaptureRecord:
     sidecar = path if path.suffix.lower() == ".json" else _sidecar_json(path)
     meta = _read_json(sidecar)
     points = _as_int(meta.get("points"))
@@ -209,6 +237,7 @@ def _from_table(campaign: str, path: Path) -> CaptureRecord:
         kind=KIND_TABLE,
         campaign=campaign,
         stem=path.stem,
+        session=session,
         captured_at=_first(meta.get("captured_at"), meta.get("measured_at")),
         run_name=_as_str(meta.get("run_name")),
         points=points,

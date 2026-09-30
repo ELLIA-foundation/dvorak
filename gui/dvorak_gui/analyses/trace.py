@@ -157,9 +157,7 @@ class TraceWindow(AnalysisWindow):
 
 def _plots_dir(record: CaptureRecord) -> Path:
     try:
-        from lib.paths import campaign_plots
-
-        return campaign_plots(record.campaign)
+        return record.path.parent / "plots"
     except Exception:
         return record.path.parent / "plots"
 

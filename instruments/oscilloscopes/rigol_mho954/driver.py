@@ -24,6 +24,8 @@ HORIZONTAL_DIVISIONS = 10
 VERTICAL_DIVISIONS = 8
 WORD_COUNTS_PER_DIV = 7500
 WORD_MIDSCALE = 32768
+# Refuse a NORM read that looks like deep memory instead of the screen.
+MAX_SCREEN_POINTS = 10_000
 MIN_TIMEBASE_S_DIV = 500e-12
 MIN_VERTICAL_V_DIV = 1e-3
 MAX_VERTICAL_V_DIV = 10.0
@@ -45,6 +47,16 @@ def _query_float(scope, command: str) -> float:
 
 def _is_invalid_measure(value: float) -> bool:
     return not math.isfinite(value) or abs(value) >= INVALID_MEASURE * 0.5
+
+
+def _set_acquire_averages(scope, averages: int) -> None:
+    if averages < 1:
+        raise ValueError("averages must be at least 1")
+    if averages == 1:
+        scope.write(":ACQuire:TYPE NORMal")
+        return
+    scope.write(":ACQuire:TYPE AVERages")
+    scope.write(f":ACQuire:AVERages {int(averages)}")
 
 
 class RigolMHO954(Oscilloscope):
@@ -124,6 +136,7 @@ class RigolMHO954(Oscilloscope):
         channel: int,
         frequency_hz: float,
         expected_vpp: float,
+        averages: int = 1,
     ) -> None:
         _require_analog_channel(channel)
         if frequency_hz <= 0:
@@ -140,6 +153,7 @@ class RigolMHO954(Oscilloscope):
         scope.write(f":CHANnel{channel}:SCALe {vdiv}")
         scope.write(f":CHANnel{channel}:OFFSet 0")
         scope.write(f":TIMebase:MAIN:SCALe {tdiv}")
+        _set_acquire_averages(scope, averages)
         scope.write(":TRIGger:MODE EDGE")
         scope.write(f":TRIGger:EDGe:SOURce CHANnel{channel}")
         scope.write(":TRIGger:EDGe:SLOPe POSitive")
@@ -147,9 +161,9 @@ class RigolMHO954(Oscilloscope):
         scope.write(":TRIGger:SWEep AUTO")
         scope.write(":RUN")
 
-    def measure_vpp(self, channel: int) -> float:
+    def measure_vpp(self, channel: int, *, allow_rescale: bool = True) -> float:
         value = self._measure_item("VPP", channel)
-        if not _is_invalid_measure(value):
+        if not allow_rescale or not _is_invalid_measure(value):
             return value
         for _ in range(4):
             if not self._coarsen_vertical(channel):
@@ -162,6 +176,37 @@ class RigolMHO954(Oscilloscope):
 
     def measure_frequency(self, channel: int) -> float:
         return self._measure_item("FREQuency", channel)
+
+    def set_vertical(self, channel: int, volts_per_div: float, offset_v: float) -> None:
+        _require_analog_channel(channel)
+        if volts_per_div <= 0:
+            raise ValueError("volts_per_div must be positive")
+        if self._scope is None:
+            self.connect()
+        scope = self.visa
+        scope.write(f":CHANnel{channel}:SCALe {volts_per_div}")
+        scope.write(f":CHANnel{channel}:OFFSet {offset_v}")
+
+    def measure_voltage_span(self, channel: int) -> tuple[float, float, float]:
+        return (
+            self._measure_item("VMIN", channel),
+            self._measure_item("VMAX", channel),
+            self._measure_item("VAVG", channel),
+        )
+
+    def read_screen(self, channel: int) -> tuple[np.ndarray, np.ndarray]:
+        _require_analog_channel(channel)
+        if self._scope is None:
+            self.connect()
+        scope = self.visa
+        _ensure_stopped(scope)
+        try:
+            return _download_norm_trace(scope, channel)
+        finally:
+            try:
+                scope.write(":RUN")
+            except Exception:
+                pass
 
     def _coarsen_vertical(self, channel: int) -> bool:
         """Increase V/div when the trace is clipped so VPP becomes valid."""
@@ -365,6 +410,57 @@ def _enable_raw_mode(scope, channel: int) -> None:
     mode = scope.query(":WAVeform:MODE?").strip().upper()
     if mode != "RAW":
         raise RuntimeError(f"Could not enter RAW waveform mode (got {mode!r})")
+
+
+def _download_norm_trace(scope, channel: int) -> tuple[np.ndarray, np.ndarray]:
+    """On-screen NORM WORD download. Does not enter RAW or walk memory depth."""
+    scope.write(f":WAVeform:SOURce CHANnel{channel}")
+    scope.write(":WAVeform:FORMat WORD")
+    scope.write(":WAVeform:MODE NORM")
+    time.sleep(0.05)
+    mode = scope.query(":WAVeform:MODE?").strip().upper()
+    if not mode.startswith("NORM"):
+        raise RuntimeError(f"Could not enter NORM waveform mode (got {mode!r})")
+    points = _screen_points(scope)
+    scope.write(":WAVeform:STARt 1")
+    scope.write(f":WAVeform:STOP {points}")
+    time.sleep(0.05)
+    preamble = _parse_preamble(scope.query(":WAVeform:PREamble?").strip())
+    raw_values = _read_word_block(scope)
+    if len(raw_values) < 8:
+        raise RuntimeError("On-screen NORM download returned no samples")
+    if len(raw_values) > points:
+        raw_values = raw_values[:points]
+    raw = np.asarray(raw_values, dtype=np.float64)
+    y_inc, y_orig, y_ref, _source = _vertical_scale(scope, preamble, channel)
+    x_inc = float(preamble["x_increment"])
+    x_orig = float(preamble["x_origin"])
+    x_ref = float(preamble["x_reference"])
+    time_s = (np.arange(len(raw), dtype=np.float64) - x_ref) * x_inc + x_orig
+    voltage_v = (raw - y_orig - y_ref) * y_inc
+    return time_s, voltage_v
+
+
+def _screen_points(scope) -> int:
+    """Point count of the visible trace. Raises if it looks like deep memory."""
+    points = 0
+    try:
+        points = int(float(scope.query(":WAVeform:POINts?").strip()))
+    except Exception:
+        points = 0
+        try:
+            scope.write("*CLS")
+        except Exception:
+            pass
+    if points < 8 or points > MAX_SCREEN_POINTS:
+        scope.write(":WAVeform:STARt 1")
+        scope.write(":WAVeform:STOP 1000")
+        time.sleep(0.05)
+        preamble = _parse_preamble(scope.query(":WAVeform:PREamble?").strip())
+        points = int(preamble["points"])
+    if points < 8 or points > MAX_SCREEN_POINTS:
+        raise RuntimeError(f"NORM screen point count {points} is not a screen record")
+    return points
 
 
 def _vertical_scale(scope, preamble: dict, channel: int) -> tuple[float, float, float, str]:

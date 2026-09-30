@@ -162,41 +162,57 @@ class CaptureBrowser(QWidget):
             campaign_item = self._tree.topLevelItem(index)
             if campaign_item is None or campaign_item.isHidden():
                 continue
-            for row in range(campaign_item.childCount()):
-                child = campaign_item.child(row)
-                if child is None or child.isHidden():
-                    continue
-                record = child.data(0, RECORD_ROLE)
-                if isinstance(record, CaptureRecord):
-                    records.append(record)
+            records.extend(self._records_under(campaign_item))
+        return records
+
+    def _records_under(self, parent: QTreeWidgetItem) -> list[CaptureRecord]:
+        records: list[CaptureRecord] = []
+        for row in range(parent.childCount()):
+            child = parent.child(row)
+            if child is None or child.isHidden():
+                continue
+            record = child.data(0, RECORD_ROLE)
+            if isinstance(record, CaptureRecord):
+                records.append(record)
+            else:
+                records.extend(self._records_under(child))
         return records
 
     def _rebuild_tree(self, query: str) -> None:
         current = self.current_record()
         self._tree.clear()
-        by_campaign: dict[str, list[CaptureRecord]] = {}
+        by_campaign: dict[str, dict[str, list[CaptureRecord]]] = {}
         for record in self._records:
-            by_campaign.setdefault(record.campaign, []).append(record)
+            session = record.session or ""
+            by_campaign.setdefault(record.campaign, {}).setdefault(session, []).append(record)
 
         select_item: QTreeWidgetItem | None = None
-        for campaign, records in by_campaign.items():
-            # Newest first within a campaign.
-            records = sorted(
-                records,
-                key=lambda rec: rec.captured_at or "",
-                reverse=True,
-            )
+        for campaign, sessions in by_campaign.items():
             parent = QTreeWidgetItem([campaign, "", "", "", "", "", ""])
             font = parent.font(0)
             font.setBold(True)
             parent.setFont(0, font)
             self._tree.addTopLevelItem(parent)
             parent.setFirstColumnSpanned(True)
-            for record in records:
-                child = self._make_item(record)
-                parent.addChild(child)
-                if current is not None and record.path == current.path:
-                    select_item = child
+            for session in sorted(sessions, key=lambda name: name.lower()):
+                session_records = sorted(
+                    sessions[session],
+                    key=lambda rec: rec.captured_at or "",
+                    reverse=True,
+                )
+                if session:
+                    group = QTreeWidgetItem([session, "", "", "", "", "", ""])
+                    parent.addChild(group)
+                    group.setFirstColumnSpanned(True)
+                else:
+                    group = parent
+                for record in session_records:
+                    child = self._make_item(record)
+                    group.addChild(child)
+                    if current is not None and record.path == current.path:
+                        select_item = child
+                if session:
+                    group.setExpanded(True)
             parent.setExpanded(True)
 
         self._apply_filter(query)
@@ -209,7 +225,7 @@ class CaptureBrowser(QWidget):
         accepted = self._is_accepted(record)
         item = QTreeWidgetItem(
             [
-                record.stem,
+                record.display_name,
                 record.kind_label,
                 record.run_name or "",
                 _format_date(record.captured_at),
@@ -244,17 +260,24 @@ class CaptureBrowser(QWidget):
             parent = self._tree.topLevelItem(index)
             if parent is None:
                 continue
-            any_visible = False
-            for row in range(parent.childCount()):
-                child = parent.child(row)
-                if child is None:
-                    continue
-                record = child.data(0, RECORD_ROLE)
-                visible = isinstance(record, CaptureRecord) and record.matches(query)
-                child.setHidden(not visible)
-                any_visible = any_visible or visible
-            parent.setHidden(not any_visible)
+            parent.setHidden(not self._filter_branch(parent, query))
         self._update_count_label()
+
+    def _filter_branch(self, item: QTreeWidgetItem, query: str) -> bool:
+        record = item.data(0, RECORD_ROLE)
+        if isinstance(record, CaptureRecord):
+            visible = record.matches(query)
+            item.setHidden(not visible)
+            return visible
+        any_visible = False
+        for row in range(item.childCount()):
+            child = item.child(row)
+            if child is None:
+                continue
+            if self._filter_branch(child, query):
+                any_visible = True
+        item.setHidden(not any_visible)
+        return any_visible
 
     def _on_current_changed(
         self,

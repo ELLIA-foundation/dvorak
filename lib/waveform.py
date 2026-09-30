@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from lib.paths import infer_session, slug_name
 
 DEFAULT_MAX_POINTS = 20_000
 
@@ -57,10 +58,22 @@ def load_waveform(npz_path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, Any
 
 
 def latest_capture(directory: Path) -> Path | None:
+    """Newest ``waveform_*.npz`` in ``directory`` or one session subdirectory."""
     if not directory.is_dir():
         return None
-    files = sorted(directory.glob("waveform_*.npz"))
-    return files[-1] if files else None
+    files = list(_waveform_npz_files(directory))
+    if not files:
+        return None
+    return max(files, key=lambda path: path.stat().st_mtime)
+
+
+def _waveform_npz_files(directory: Path) -> list[Path]:
+    files = list(directory.glob("waveform_*.npz"))
+    for child in directory.iterdir():
+        if not child.is_dir() or child.name.startswith(".") or child.name.lower() == "plots":
+            continue
+        files.extend(child.glob("waveform_*.npz"))
+    return files
 
 
 def waveform_stem(
@@ -69,15 +82,13 @@ def waveform_stem(
     *,
     stamp: str | None = None,
 ) -> str:
-    """Build ``waveform_<slug>_<timestamp>_ch<N>`` or ``waveform_<timestamp>_ch<N>``."""
+    """Build ``waveform_<name>_ch<N>`` or ``waveform_<timestamp>_ch<N>`` if unnamed."""
+    slug = slug_name(run_name)
+    if slug:
+        return f"waveform_{slug}_ch{channel}"
     if stamp is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if run_name is None or not str(run_name).strip():
-        return f"waveform_{stamp}_ch{channel}"
-    slug = re.sub(r"[^\w\-]+", "_", str(run_name).strip()).strip("_")
-    if not slug:
-        return f"waveform_{stamp}_ch{channel}"
-    return f"waveform_{slug}_{stamp}_ch{channel}"
+    return f"waveform_{stamp}_ch{channel}"
 
 
 def save_waveform(
@@ -92,6 +103,10 @@ def save_waveform(
 
     npz_path = output_dir / f"{stem}.npz"
     json_path = output_dir / f"{stem}.json"
+    if npz_path.exists() or json_path.exists():
+        raise FileExistsError(
+            f"Capture already exists: {npz_path.name}. Choose another measurement name."
+        )
 
     np.savez_compressed(
         npz_path,
@@ -101,6 +116,9 @@ def save_waveform(
     metadata = capture.metadata_dict()
     if run_name is not None and str(run_name).strip():
         metadata["run_name"] = str(run_name).strip()
+    session = infer_session(output_dir)
+    if session:
+        metadata["session"] = session
     json_path.write_text(
         json.dumps(metadata, indent=2),
         encoding="utf-8",

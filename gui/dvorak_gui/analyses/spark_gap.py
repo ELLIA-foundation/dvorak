@@ -898,7 +898,16 @@ class SparkGapWindow(AnalysisWindow):
                 "detection": self._preview.get("detection") or {},
             }
         self._compose.set_sources(records, live)
-        plots = self._controller.resolved_data_root() / CAMPAIGN_SPARK_GAP / "Data" / "plots"
+        if self._chosen is not None:
+            plots = self._chosen.path.parent / "plots"
+        else:
+            plots = (
+                self._controller.resolved_data_root()
+                / CAMPAIGN_SPARK_GAP
+                / "Data"
+                / "Legacy"
+                / "plots"
+            )
         self._compose.set_pdf_default(plots / "compose.pdf")
 
 

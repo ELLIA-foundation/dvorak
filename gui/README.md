@@ -32,9 +32,11 @@ stays open. **File → New analysis window…** brings the launcher back.
 ## Data
 
 The left pane lists captures under `Measurements/<Campaign>/Data/` (waveforms,
-videos, and CSV / frequency-response tables). Search filters by name, campaign,
-and sidecar metadata. Analyses that only accept waveforms still show camera
-clips and tables, but Open / double-click is disabled for those rows.
+videos, and CSV / frequency-response tables). Spark-gap waveforms sit in
+`Data/<session>/` (older work is under `Legacy`). Search filters by name,
+campaign, session, and sidecar metadata. Analyses that only accept waveforms
+still show camera clips and tables, but Open / double-click is disabled for
+those rows.
 
 **Use other folder…** points the catalogue at an external tree with the same
 layout; **Use local** returns to this repo. Right-click a capture to reveal it
@@ -44,12 +46,12 @@ in Explorer or copy its path.
 
 **Oscilloscope Trace Analysis** loads the NPZ on a background thread and plots
 it with min-max downsampling. Hover for t / V; **Cursors** for Δt.
-**View → Reset view** restores the full window. **File → Export plot…** writes
-a PNG of the current view (defaults to `Data/plots/`).
+**View → Reset view** restores the full window. **File → Export plot…** writes a PNG of the current view (defaults to the
+capture's `plots/` folder).
 
 **Spark Gap Analysis** uses the same plot. **Detect events** marks breakdowns
 (orange typical, red first-cycle). **Run full analysis** writes
-`Data/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08, and
+`Data/<session>/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08, and
 `analysis.pdf`). Tabs: Overview | Figures | Compose | Events | Summary.
 **Figures** has Metrics (any event scalar as a sequence or histogram), Overlay
 (discharge / ramp / post-collapse for chosen events), and Saved figures (the
@@ -73,15 +75,21 @@ decodes the current campaign in the background. ffmpeg must be on `PATH`.
 `instruments/lab.json`. **Test connection** opens the instrument, calls
 `identify()`, and closes it.
 
-- Waveform capture stays disabled until the oscilloscope probe succeeds.
+- Waveform capture stays disabled until the oscilloscope probe succeeds, a
+  **session** is selected, and a unique **measurement name** is entered. The
+  window shows the path that will be written (`Data/<session>/waveform_<name>_chN.npz`)
+  and refuses a name that already exists. After capture it checks that the NPZ
+  and JSON both exist.
 - The frequency sweep stays disabled until both the oscilloscope and the
-  generator succeed.
+  generator succeed. **Averages** is a power-of-two dropdown (1 = normal);
+  the sweep waits one on-screen window per average before reading VPP.
+  **Stop sweep** interrupts the loop (within ~0.1 s of the next wait), turns
+  the generator off, and writes any points already collected.
 - Camera record stays disabled until the camera probe succeeds. The NDI
   runtime is required only for that probe and for recording.
 
-Captures use the same writers as the campaign CLIs and land in
-`Measurements/<campaign>/Data/`. Refresh the catalogue in an analysis window
-to open the new file.
+Spark-gap waveforms land in `Measurements/Spark_Gap_Traces/Data/<session>/`.
+Refresh the catalogue in an analysis window to open the new file.
 
 ## Add an analysis plugin
 

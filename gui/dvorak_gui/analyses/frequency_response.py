@@ -101,7 +101,7 @@ register(
     AnalysisSpec(
         id=FREQ_ID,
         title="Frequency response",
-        description="Plot V_scope / V_nominal versus frequency.",
+        description="Plot V_scope / V_nominal and sine THD versus frequency.",
         family=FAMILY_ANALYSIS,
         accepted_kinds=(KIND_TABLE,),
         window_factory=_create_window,

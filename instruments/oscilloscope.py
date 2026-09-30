@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import numpy as np
+
 from lib.waveform import WaveformCapture
 
 
@@ -44,13 +46,33 @@ class Oscilloscope(ABC):
         channel: int,
         frequency_hz: float,
         expected_vpp: float,
+        averages: int = 1,
     ) -> None:
-        """Set timebase and vertical scale for a sine of the given frequency and Vpp."""
+        """Set timebase, vertical scale, and acquire averages for a sine."""
 
     @abstractmethod
-    def measure_vpp(self, channel: int) -> float:
-        """Peak-to-peak voltage on one analog channel."""
+    def measure_vpp(self, channel: int, *, allow_rescale: bool = True) -> float:
+        """Peak-to-peak voltage on one analog channel.
+
+        When ``allow_rescale`` is false, a failed reading stays NaN and the
+        vertical scale is left unchanged.
+        """
 
     @abstractmethod
     def measure_frequency(self, channel: int) -> float:
         """Measured frequency on one analog channel."""
+
+    @abstractmethod
+    def set_vertical(self, channel: int, volts_per_div: float, offset_v: float) -> None:
+        """Set one channel's V/div and the voltage at the center of the screen."""
+
+    @abstractmethod
+    def measure_voltage_span(self, channel: int) -> tuple[float, float, float]:
+        """Return ``(vmin, vmax, vavg)`` in volts. Invalid readings are NaN."""
+
+    @abstractmethod
+    def read_screen(self, channel: int) -> tuple[np.ndarray, np.ndarray]:
+        """Stop, download the visible trace, and run again.
+
+        Returns ``(time_s, voltage_v)`` for the on-screen record only.
+        """

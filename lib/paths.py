@@ -15,13 +15,22 @@ repository root on ``sys.path`` before importing this module:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 CAMPAIGN_SPARK_GAP = "Spark_Gap_Traces"
 CAMPAIGN_FREQUENCY_RESPONSES = "Frequency_responses"
 VIDEO_CONTAINER = "Videos"
 _VIDEO_SKIP_DIRS = {"Analysis_scripts"}
+_SESSION_SKIP_DIRS = {"plots"}
 VIDEO_EXTENSIONS = {".mp4", ".mov"}
+
+
+def slug_name(value: str | None) -> str:
+    """Filesystem-safe token for session folders and measurement names."""
+    if value is None:
+        return ""
+    return re.sub(r"[^\w\-]+", "_", str(value).strip()).strip("_")
 
 
 def repo_root() -> Path:
@@ -64,6 +73,60 @@ def campaign_data(name: str) -> Path:
 
 def campaign_plots(name: str) -> Path:
     return campaign_data(name) / "plots"
+
+
+def list_sessions(campaign: str) -> list[str]:
+    """Immediate session folders under Measurements/<campaign>/Data/."""
+    root = campaign_data(campaign)
+    if not root.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_dir()
+        and not path.name.startswith(".")
+        and path.name.lower() not in _SESSION_SKIP_DIRS
+    )
+
+
+def campaign_session_data(campaign: str, session: str, *, create: bool = False) -> Path:
+    slug = slug_name(session)
+    if not slug:
+        raise ValueError(f"Invalid session name {session!r}")
+    path = campaign_data(campaign) / slug
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    if not path.is_dir():
+        known = ", ".join(list_sessions(campaign)) or "(none)"
+        raise FileNotFoundError(
+            f"Unknown session {session!r} in {campaign}. Available: {known}"
+        )
+    return path
+
+
+def campaign_session_plots(campaign: str, session: str, *, create: bool = False) -> Path:
+    return campaign_session_data(campaign, session, create=create) / "plots"
+
+
+def infer_session(path: Path) -> str | None:
+    """Return the session folder if ``path`` sits under Measurements/<campaign>/Data/<session>/."""
+    resolved = path.resolve()
+    campaign = infer_campaign(resolved)
+    if campaign is None:
+        return None
+    data = campaign_data(campaign).resolve()
+    try:
+        relative = resolved.relative_to(data)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if not parts or parts[0].lower() in _SESSION_SKIP_DIRS:
+        return None
+    session_dir = data / parts[0]
+    if session_dir.is_dir():
+        return parts[0]
+    return None
 
 
 def campaign_scripts(name: str) -> Path:

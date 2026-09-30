@@ -23,7 +23,8 @@ Measurements/         One folder per campaign
   <Campaign>/
     Analysis_scripts/
     Data/             waveform_*.npz + .json, or video_*.mp4 + .json
-      plots/          Derived PNG/PDF and analysis_<stem>/
+      <session>/      Spark-gap sessions (Legacy holds older captures)
+        plots/        Derived PNG/PDF and analysis_<stem>/
 ```
 
 Campaigns and tools import **roles** (`open_oscilloscope()`, `open_generator()`,

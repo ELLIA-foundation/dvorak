@@ -59,6 +59,16 @@ def _is_invalid_measure(value: float) -> bool:
     return not math.isfinite(value) or abs(value) >= INVALID_MEASURE * 0.5
 
 
+def _set_acquire_averages(scope, averages: int) -> None:
+    if averages < 1:
+        raise ValueError("averages must be at least 1")
+    if averages == 1:
+        scope.write(":ACQuire:TYPE NORMal")
+        return
+    scope.write(":ACQuire:TYPE AVERages")
+    scope.write(f":ACQuire:AVERages {int(averages)}")
+
+
 @dataclass(frozen=True)
 class ScreenWindow:
     """Visible 12-division window from front-panel timebase and channel settings."""
@@ -196,6 +206,7 @@ class RigolMSO1104(Oscilloscope):
         channel: int,
         frequency_hz: float,
         expected_vpp: float,
+        averages: int = 1,
     ) -> None:
         if channel not in (1, 2, 3, 4):
             raise ValueError("MSO1104 analog channels are 1-4")
@@ -213,6 +224,7 @@ class RigolMSO1104(Oscilloscope):
         scope.write(f":CHANnel{channel}:SCALe {vdiv}")
         scope.write(f":CHANnel{channel}:OFFSet 0")
         scope.write(f":TIMebase:MAIN:SCALe {tdiv}")
+        _set_acquire_averages(scope, averages)
         scope.write(":TRIGger:MODE EDGE")
         scope.write(f":TRIGger:EDGe:SOURce CHAN{channel}")
         scope.write(":TRIGger:EDGe:SLOPe POSitive")
@@ -220,9 +232,9 @@ class RigolMSO1104(Oscilloscope):
         scope.write(":TRIGger:SWEep AUTO")
         scope.write(":RUN")
 
-    def measure_vpp(self, channel: int) -> float:
+    def measure_vpp(self, channel: int, *, allow_rescale: bool = True) -> float:
         value = self._measure_item("VPP", channel)
-        if not _is_invalid_measure(value):
+        if not allow_rescale or not _is_invalid_measure(value):
             return value
         for _ in range(4):
             if not self._coarsen_vertical(channel):
@@ -235,6 +247,42 @@ class RigolMSO1104(Oscilloscope):
 
     def measure_frequency(self, channel: int) -> float:
         return self._measure_item("FREQuency", channel)
+
+    def set_vertical(self, channel: int, volts_per_div: float, offset_v: float) -> None:
+        if channel not in (1, 2, 3, 4):
+            raise ValueError("MSO1104 analog channels are 1-4")
+        if volts_per_div <= 0:
+            raise ValueError("volts_per_div must be positive")
+        if self._scope is None:
+            self.connect()
+        scope = self.visa
+        scope.write(f":CHANnel{channel}:SCALe {volts_per_div}")
+        scope.write(f":CHANnel{channel}:OFFSet {offset_v}")
+
+    def measure_voltage_span(self, channel: int) -> tuple[float, float, float]:
+        return (
+            self._measure_item("VMIN", channel),
+            self._measure_item("VMAX", channel),
+            self._measure_item("VAVG", channel),
+        )
+
+    def read_screen(self, channel: int) -> tuple[np.ndarray, np.ndarray]:
+        if channel not in (1, 2, 3, 4):
+            raise ValueError("MSO1104 analog channels are 1-4")
+        if self._scope is None:
+            self.connect()
+        scope = self.visa
+        _ensure_stopped(scope)
+        try:
+            norm = _download_norm_trace(scope, channel)
+            if norm is None:
+                raise RuntimeError("On-screen NORM download returned no samples")
+            return norm.time_s, norm.voltage_v
+        finally:
+            try:
+                scope.write(":RUN")
+            except Exception:
+                pass
 
     def _coarsen_vertical(self, channel: int) -> bool:
         """Increase V/div when the trace is clipped so VPP becomes valid."""

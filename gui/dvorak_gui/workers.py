@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Event
 from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
@@ -51,6 +52,7 @@ class WorkerHandle(QObject):
         self._worker: FunctionWorker | None = None
         self._on_finished: Callable[[Any], None] | None = None
         self._on_failed: Callable[[str], None] | None = None
+        self._cancel_event: Event | None = None
         self._generation = 0
 
     def start(
@@ -59,12 +61,14 @@ class WorkerHandle(QObject):
         *args: Any,
         on_finished: Callable[[Any], None] | None = None,
         on_failed: Callable[[str], None] | None = None,
+        cancel_event: Event | None = None,
         **kwargs: Any,
     ) -> None:
         self.cancel()
         self._generation += 1
         self._on_finished = on_finished
         self._on_failed = on_failed
+        self._cancel_event = cancel_event
         thread = QThread()
         worker = FunctionWorker(fn, *args, **kwargs)
         worker.generation = self._generation
@@ -99,7 +103,12 @@ class WorkerHandle(QObject):
         if callback is not None and self._current_result():
             callback(message)
 
+    def request_stop(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+
     def cancel(self) -> None:
+        self.request_stop()
         worker = self._worker
         thread = self._thread
         self._on_finished = None
@@ -130,3 +139,4 @@ class WorkerHandle(QObject):
     def _clear(self) -> None:
         self._thread = None
         self._worker = None
+        self._cancel_event = None

@@ -21,17 +21,23 @@ from instruments.registry import (
     list_oscilloscopes,
     open_oscilloscope,
 )
-from lib.paths import campaign_data, list_campaigns
+from lib.paths import campaign_data, campaign_session_data, list_campaigns
 from lib.waveform import save_waveform
 
 
-def _resolve_output_dir(campaign: str | None, output_dir: Path | None) -> Path:
+def _resolve_output_dir(
+    campaign: str | None,
+    session: str | None,
+    output_dir: Path | None,
+) -> Path:
     if output_dir is not None:
         return output_dir
     if campaign:
         try:
+            if session:
+                return campaign_session_data(campaign, session, create=True)
             return campaign_data(campaign)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
     known = ", ".join(list_campaigns()) or "(none)"
     raise SystemExit(
@@ -50,6 +56,18 @@ def main() -> None:
         type=str,
         default=None,
         help="Measurement campaign name (saves under Measurements/<name>/Data/)",
+    )
+    parser.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        help="Session folder under Data/ (Spark_Gap_Traces: Data/<session>/)",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Measurement name for waveform_<name>_chN.npz (timestamp stays in JSON)",
     )
     parser.add_argument(
         "--scope",
@@ -94,7 +112,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    output_dir = _resolve_output_dir(args.campaign, args.output_dir)
+    output_dir = _resolve_output_dir(args.campaign, args.session, args.output_dir)
     scope = open_oscilloscope(args.scope)
     try:
         print(f"Connected: {scope.identify()}")
@@ -106,7 +124,7 @@ def main() -> None:
             window=args.window,
         )
 
-        paths = save_waveform(capture, output_dir, write_csv=args.csv)
+        paths = save_waveform(capture, output_dir, write_csv=args.csv, run_name=args.name)
 
         extra = capture.extra
         duration_s = (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -27,8 +29,12 @@ from lib.paths import (
     CAMPAIGN_FREQUENCY_RESPONSES,
     CAMPAIGN_SPARK_GAP,
     campaign_data,
+    campaign_session_data,
     list_campaigns,
+    list_sessions,
+    slug_name,
 )
+from lib.waveform import waveform_stem
 
 from ..campaign_import import load_campaign_module
 from ..registry import FAMILY_MEASUREMENT, AnalysisSpec, get, register
@@ -60,21 +66,27 @@ def _probe(role: str, model_id: str | None) -> str:
 def _capture_waveform(
     model_id: str | None,
     campaign: str,
+    session: str,
     channel: int,
     chunk_size: int,
     window: str,
-    run_name: str | None,
+    run_name: str,
 ) -> str:
     acquire = load_campaign_module(CAMPAIGN_SPARK_GAP, "analyze_spark_gap")
+    output_dir = campaign_session_data(campaign, session, create=True)
     npz_path, _run = acquire.acquire_waveform(
         model_id,
         channel,
         chunk_size,
         False,
-        campaign_data(campaign),
+        output_dir,
         window=window,
         run_name=run_name,
     )
+    json_path = npz_path.with_suffix(".json")
+    missing = [str(path) for path in (npz_path, json_path) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Capture did not write: " + ", ".join(missing))
     return str(npz_path)
 
 
@@ -88,6 +100,8 @@ def _run_frequency(
     gen_channel: int,
     scope_channel: int,
     scope_bw_hz: float,
+    averages: int,
+    stop_event: Event,
     run_name: str | None,
 ) -> str:
     sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
@@ -101,10 +115,17 @@ def _run_frequency(
         scope_channel,
         scope_bw_hz,
         scope_model,
+        averages,
+        should_stop=stop_event.is_set,
     )
     payload["run_name"] = run_name
+    if payload.get("cancelled") and not payload.get("rows"):
+        return "cancelled"
     paths = sweep.save_sweep(payload, show=False)
-    return str(paths["csv"])
+    path = str(paths["csv"])
+    if payload.get("cancelled"):
+        return f"cancelled:{path}"
+    return path
 
 
 def _record_camera(
@@ -138,6 +159,7 @@ class MeasurementWindow(AnalysisWindow):
         }
         self._ok = {_ROLE_SCOPE: False, _ROLE_GEN: False, _ROLE_CAMERA: False}
         self._busy = False
+        self._sweeping = False
         super().__init__(spec, controller)
         self.resize(1100, 760)
         self.statusBar().showMessage("Test a connection before starting a measurement.")
@@ -173,9 +195,20 @@ class MeasurementWindow(AnalysisWindow):
         form.addRow("Camera", self._role_row(self._camera_model, self._camera_btn, self._camera_status))
 
         self._wave_campaign = self._campaign_combo(campaigns, CAMPAIGN_SPARK_GAP)
+        self._wave_campaign.currentTextChanged.connect(self._on_wave_campaign_changed)
+        self._wave_session = QComboBox()
+        self._wave_session.currentIndexChanged.connect(self._update_wave_preview)
+        new_session_btn = QPushButton("New session…")
+        new_session_btn.clicked.connect(self._new_session)
+        session_row = QWidget()
+        session_layout = QHBoxLayout(session_row)
+        session_layout.setContentsMargins(0, 0, 0, 0)
+        session_layout.addWidget(self._wave_session, stretch=1)
+        session_layout.addWidget(new_session_btn)
         self._wave_channel = QSpinBox()
         self._wave_channel.setRange(1, 4)
         self._wave_channel.setValue(1)
+        self._wave_channel.valueChanged.connect(self._update_wave_preview)
         self._wave_chunk = QSpinBox()
         self._wave_chunk.setRange(1_000, 5_000_000)
         self._wave_chunk.setSingleStep(50_000)
@@ -183,16 +216,22 @@ class MeasurementWindow(AnalysisWindow):
         self._wave_window = QComboBox()
         self._wave_window.addItems(["screen", "full"])
         self._wave_name = QLineEdit()
-        self._wave_name.setPlaceholderText("optional run name")
+        self._wave_name.setPlaceholderText("required measurement name")
+        self._wave_name.textChanged.connect(self._update_wave_preview)
+        self._wave_preview = QLabel("")
+        self._wave_preview.setWordWrap(True)
+        self._wave_preview.setStyleSheet("color: palette(mid);")
         self._wave_btn = QPushButton("Capture waveform")
         self._wave_btn.clicked.connect(self._capture)
         wave = QGroupBox("Waveform")
         wave_form = QFormLayout(wave)
         wave_form.addRow("Campaign", self._wave_campaign)
+        wave_form.addRow("Session", session_row)
         wave_form.addRow("Channel", self._wave_channel)
         wave_form.addRow("Chunk size", self._wave_chunk)
         wave_form.addRow("Window", self._wave_window)
-        wave_form.addRow("Run name", self._wave_name)
+        wave_form.addRow("Measurement name", self._wave_name)
+        wave_form.addRow("Will write", self._wave_preview)
         wave_form.addRow(self._wave_btn)
 
         self._freq_min = self._hz_box(1e3)
@@ -208,10 +247,18 @@ class MeasurementWindow(AnalysisWindow):
         self._freq_scope_ch = QSpinBox()
         self._freq_scope_ch.setRange(1, 4)
         self._freq_bw = self._hz_box(1e8)
+        self._freq_averages = self._averages_combo()
         self._freq_name = QLineEdit()
         self._freq_name.setPlaceholderText("optional run name")
         self._freq_btn = QPushButton("Run frequency sweep")
         self._freq_btn.clicked.connect(self._sweep)
+        self._freq_stop_btn = QPushButton("Stop sweep")
+        self._freq_stop_btn.clicked.connect(self._stop_sweep)
+        freq_actions = QWidget()
+        freq_actions_layout = QHBoxLayout(freq_actions)
+        freq_actions_layout.setContentsMargins(0, 0, 0, 0)
+        freq_actions_layout.addWidget(self._freq_btn)
+        freq_actions_layout.addWidget(self._freq_stop_btn)
         freq = QGroupBox("Frequency response")
         freq_form = QFormLayout(freq)
         freq_form.addRow("f min (Hz)", self._freq_min)
@@ -222,8 +269,9 @@ class MeasurementWindow(AnalysisWindow):
         freq_form.addRow("Generator channel", self._freq_gen_ch)
         freq_form.addRow("Scope channel", self._freq_scope_ch)
         freq_form.addRow("Scope BW (Hz)", self._freq_bw)
+        freq_form.addRow("Averages", self._freq_averages)
         freq_form.addRow("Run name", self._freq_name)
-        freq_form.addRow(self._freq_btn)
+        freq_form.addRow(freq_actions)
 
         self._cam_campaign = self._campaign_combo(campaigns, "Camera_Check")
         self._cam_duration = QDoubleSpinBox()
@@ -263,7 +311,9 @@ class MeasurementWindow(AnalysisWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
         self.setCentralWidget(splitter)
+        self._fill_sessions(self._wave_campaign.currentText())
         self._sync_actions()
+        self._update_wave_preview()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         for worker in self._workers.values():
@@ -296,6 +346,17 @@ class MeasurementWindow(AnalysisWindow):
         box.setDecimals(0)
         box.setValue(value)
         return box
+
+    def _averages_combo(self) -> QComboBox:
+        sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
+        combo = QComboBox()
+        for count in sweep.AVERAGE_CHOICES:
+            label = "1 (normal)" if count == 1 else str(count)
+            combo.addItem(label, count)
+        index = combo.findData(sweep.DEFAULT_AVERAGES)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        return combo
 
     def _role_row(self, combo: QComboBox, button: QPushButton, status: QLabel) -> QWidget:
         row = QWidget()
@@ -375,18 +436,106 @@ class MeasurementWindow(AnalysisWindow):
         self._scope_btn.setEnabled(idle)
         self._gen_btn.setEnabled(idle)
         self._camera_btn.setEnabled(idle)
-        self._wave_btn.setEnabled(idle and self._ok[_ROLE_SCOPE])
+        self._wave_btn.setEnabled(idle and self._ok[_ROLE_SCOPE] and self._wave_ready())
         self._freq_btn.setEnabled(idle and self._ok[_ROLE_SCOPE] and self._ok[_ROLE_GEN])
+        if hasattr(self, "_freq_stop_btn"):
+            self._freq_stop_btn.setEnabled(self._sweeping)
         self._cam_btn.setEnabled(idle and self._ok[_ROLE_CAMERA])
 
+    def _fill_sessions(self, campaign: str, selected: str | None = None) -> None:
+        sessions = list_sessions(campaign) if campaign else []
+        self._wave_session.blockSignals(True)
+        self._wave_session.clear()
+        self._wave_session.addItem("Select a session", "")
+        prefer = selected
+        for name in sessions:
+            self._wave_session.addItem(name, name)
+            if prefer is None and name != "Legacy":
+                prefer = name
+        if prefer:
+            index = self._wave_session.findData(prefer)
+            if index >= 0:
+                self._wave_session.setCurrentIndex(index)
+        self._wave_session.blockSignals(False)
+        self._update_wave_preview()
+
+    def _on_wave_campaign_changed(self, campaign: str) -> None:
+        self._fill_sessions(campaign)
+
+    def _new_session(self) -> None:
+        campaign = self._wave_campaign.currentText()
+        if not campaign:
+            return
+        name, ok = QInputDialog.getText(self, "New session", "Session name:")
+        if not ok:
+            return
+        slug = slug_name(name)
+        if not slug:
+            QMessageBox.warning(self, "Session", "Enter a name that can be used as a folder.")
+            return
+        campaign_session_data(campaign, slug, create=True)
+        self._fill_sessions(campaign, selected=slug)
+        self._log.appendPlainText(f"Session folder: {campaign_session_data(campaign, slug)}")
+
+    def _wave_session_name(self) -> str:
+        return str(self._wave_session.currentData() or "")
+
+    def _wave_destination(self) -> Path | None:
+        campaign = self._wave_campaign.currentText()
+        session = self._wave_session_name()
+        name = slug_name(self._wave_name.text())
+        if not campaign or not session or not name:
+            return None
+        stem = waveform_stem(int(self._wave_channel.value()), name)
+        return campaign_session_data(campaign, session, create=True) / f"{stem}.npz"
+
+    def _wave_ready(self) -> bool:
+        dest = self._wave_destination()
+        return dest is not None and not dest.exists() and not dest.with_suffix(".json").exists()
+
+    def _update_wave_preview(self) -> None:
+        if not hasattr(self, "_wave_preview"):
+            return
+        name = self._wave_name.text().strip()
+        session = self._wave_session_name()
+        if not session:
+            self._wave_preview.setText("Choose or create a session.")
+        elif not slug_name(name):
+            self._wave_preview.setText("Enter a measurement name.")
+        else:
+            dest = self._wave_destination()
+            assert dest is not None
+            if dest.exists() or dest.with_suffix(".json").exists():
+                self._wave_preview.setText(f"{dest.name} already exists in this session.")
+            else:
+                self._wave_preview.setText(str(dest))
+        self._sync_actions()
+
     def _capture(self) -> None:
-        name = self._wave_name.text().strip() or None
+        dest = self._wave_destination()
+        session = self._wave_session_name()
+        name = self._wave_name.text().strip()
+        if dest is None:
+            QMessageBox.warning(
+                self,
+                "Capture",
+                "Choose a session and a measurement name before capturing.",
+            )
+            return
+        if dest.exists() or dest.with_suffix(".json").exists():
+            QMessageBox.warning(
+                self,
+                "Capture",
+                f"{dest.name} already exists. Pick another measurement name.",
+            )
+            return
         self._set_busy(True)
-        self._log.appendPlainText("Capturing waveform…")
+        self._log.appendPlainText(f"Capturing {name} → {dest}")
         self._workers["run"].start(
             _capture_waveform,
             self._model_id(self._scope_model),
             self._wave_campaign.currentText(),
+            session,
             int(self._wave_channel.value()),
             int(self._wave_chunk.value()),
             str(self._wave_window.currentText()),
@@ -419,6 +568,8 @@ class MeasurementWindow(AnalysisWindow):
                 QMessageBox.warning(self, "Load", "Load must be ohms, or inf.")
                 return
         name = self._freq_name.text().strip() or None
+        stop_event = Event()
+        self._sweeping = True
         self._set_busy(True)
         self._log.appendPlainText("Running frequency sweep…")
         self._workers["run"].start(
@@ -432,10 +583,19 @@ class MeasurementWindow(AnalysisWindow):
             int(self._freq_gen_ch.value()),
             int(self._freq_scope_ch.value()),
             float(self._freq_bw.value()),
+            int(self._freq_averages.currentData()),
+            stop_event,
             name,
+            cancel_event=stop_event,
             on_finished=self._run_ok,
             on_failed=self._run_fail,
         )
+
+    def _stop_sweep(self) -> None:
+        self._workers["run"].request_stop()
+        self._log.appendPlainText("Stopping frequency sweep…")
+        self.statusBar().showMessage("Stopping…")
+        self._freq_stop_btn.setEnabled(False)
 
     def _record(self) -> None:
         self._set_busy(True)
@@ -451,12 +611,44 @@ class MeasurementWindow(AnalysisWindow):
         )
 
     def _run_ok(self, result: object) -> None:
-        path = Path(str(result))
-        self._log.appendPlainText(f"Wrote {path}")
+        self._sweeping = False
+        text = str(result)
+        if text == "cancelled":
+            self._log.appendPlainText("Frequency sweep stopped.")
+            self._set_busy(False)
+            self.statusBar().showMessage("Sweep stopped")
+            return
+        if text.startswith("cancelled:"):
+            path = Path(text.split(":", 1)[1])
+            self._log.appendPlainText(f"Sweep stopped; wrote {path}")
+            self._set_busy(False)
+            self.statusBar().showMessage(f"Sweep stopped; wrote {path.name}")
+            return
+        path = Path(text)
+        json_path = path.with_suffix(".json")
+        if path.suffix.lower() == ".npz":
+            missing = [str(item) for item in (path, json_path) if not item.is_file()]
+            if missing:
+                self._log.appendPlainText("Capture missing files: " + ", ".join(missing))
+                self._set_busy(False)
+                self.statusBar().showMessage("Capture files missing")
+                QMessageBox.warning(
+                    self,
+                    "Capture incomplete",
+                    "Expected files were not written:\n" + "\n".join(missing),
+                )
+                self._update_wave_preview()
+                return
+            self._log.appendPlainText(f"Wrote {path}")
+            self._log.appendPlainText(f"Wrote {json_path}")
+            self._update_wave_preview()
+        else:
+            self._log.appendPlainText(f"Wrote {path}")
         self._set_busy(False)
         self.statusBar().showMessage(f"Wrote {path.name}")
 
     def _run_fail(self, message: str) -> None:
+        self._sweeping = False
         self._log.appendPlainText(f"Measurement failed: {message}")
         self._set_busy(False)
         self.statusBar().showMessage("Measurement failed")
