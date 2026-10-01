@@ -98,11 +98,23 @@ CSV_COLUMNS = (
     "vertical_status",
     "thd",
 )
+DUAL_COLUMNS = (
+    "v_in_vpp",
+    "v_in_div",
+    "v_in_status",
+    "gain",
+    "gain_db",
+    "phase_deg",
+)
 THD_DEFINITION = (
     "THD = sqrt(V2^2 + ... + VH^2) / V1 from a least-squares fit of the "
     "on-screen trace at the commanded frequency and its integer harmonics. "
     "H is at most 10 and stops below 40% of the screen sample rate. "
     "Stored as a fraction. NaN when vertical_status is clipped or below_floor."
+)
+PHASE_DEFINITION = (
+    "Phase of the output channel relative to the input channel, in degrees, "
+    "from the scope RPHase measurement. NaN unless both channels finish ok."
 )
 
 
@@ -200,13 +212,21 @@ def _nominal_vpp(requested_vpp: float | None, v_max: float) -> float:
     return min(requested_vpp, v_max)
 
 
+def _csv_columns(rows: list[dict]) -> list[str]:
+    columns = list(CSV_COLUMNS)
+    if any("phase_deg" in row for row in rows):
+        columns.extend(DUAL_COLUMNS)
+    return columns
+
+
 def _write_csv(path: Path, rows: list[dict]) -> None:
+    columns = _csv_columns(rows)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(CSV_COLUMNS), extrasaction="ignore")
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
             out = {}
-            for name in CSV_COLUMNS:
+            for name in columns:
                 value = row[name]
                 if name == "v_requested_vpp" and value is None:
                     out[name] = "max"
@@ -266,11 +286,11 @@ def _tune_vertical(
     frequency_hz: float,
     averages: int,
     should_stop: object,
-) -> tuple[str, float, float | None]:
+) -> tuple[str, float, float | None, float]:
     """Walk V/div until the trace fills the screen.
 
-    Returns status, V/div, and a sample Vpp when the scope's extrema were
-    invalid but the on-screen trace was usable.
+    Returns status, V/div, a sample Vpp when the scope's extrema were invalid
+    but the on-screen trace was usable, and the offset at screen center.
     """
     scale = nearest_scale(start_scale)
     offset = 0.0
@@ -311,7 +331,7 @@ def _tune_vertical(
         ):
             fallback_vpp = judge_max - judge_min
         if action in {"ok", "below_floor", "clipped"}:
-            return action, scale, fallback_vpp
+            return action, scale, fallback_vpp, offset
         if action == "finer":
             nxt = next_finer(scale)
         else:
@@ -327,10 +347,43 @@ def _tune_vertical(
                 and judge_max > judge_min
             ):
                 kept = judge_max - judge_min
-            return terminal, scale, kept
+            return terminal, scale, kept, offset
         previous = scale
         scale = nxt
-    return "clipped", scale, None
+    return "clipped", scale, None, offset
+
+
+def _channel_seed(
+    v_nominal: float,
+    last_ok_vpp: float | None,
+    floor_scale: float | None,
+) -> tuple[float, float]:
+    """Return the ladder start and the Vpp passed to prepare_sine."""
+    if floor_scale is not None:
+        start = nearest_scale(floor_scale)
+        return start, start * 2.0
+    prepare_vpp = v_nominal if last_ok_vpp is None else last_ok_vpp
+    return seed_volts_per_div(prepare_vpp), prepare_vpp
+
+
+def _next_seed(
+    status: str,
+    vpp: float,
+    v_div: float,
+    last_ok_vpp: float | None,
+) -> tuple[float | None, float | None]:
+    """Return (last ok Vpp, floor scale) for the following point."""
+    if status == "below_floor" and math.isfinite(vpp):
+        return None, v_div
+    if status == "ok" and math.isfinite(vpp) and vpp > 0:
+        return vpp, None
+    return last_ok_vpp, None
+
+
+def _apply_sample_vpp(v_scope: float, sample_vpp: float | None) -> float:
+    if math.isfinite(v_scope) or sample_vpp is None:
+        return v_scope
+    return sample_vpp
 
 
 def _format_thd(thd: float) -> str:
@@ -351,7 +404,13 @@ def run_sweep(
     scope_model: str | None = None,
     averages: int = DEFAULT_AVERAGES,
     should_stop: object = None,
+    input_channel: int | None = None,
 ) -> dict:
+    if input_channel is not None:
+        if input_channel not in (1, 2, 3, 4):
+            raise ValueError("input_channel must be 1-4")
+        if input_channel == scope_channel:
+            raise ValueError("input_channel and scope_channel must differ")
     if averages not in AVERAGE_CHOICES:
         allowed = ", ".join(str(item) for item in AVERAGE_CHOICES)
         raise ValueError(f"averages must be one of: {allowed}")
@@ -369,8 +428,11 @@ def run_sweep(
         scope_idn = scope.identify()
         gen.set_load(gen_channel, load_ohm)
         gen.output(gen_channel, True)
-        last_ok_vpp: float | None = None
-        floor_scale: float | None = None
+        out_ok: float | None = None
+        out_floor: float | None = None
+        in_ok: float | None = None
+        in_floor: float | None = None
+        dual = input_channel is not None
 
         for frequency_hz in frequencies:
             _raise_if_stopped(should_stop)
@@ -378,30 +440,50 @@ def run_sweep(
             v_nominal = _nominal_vpp(amplitude_vpp, v_max)
             gen.set_waveform(gen_channel, "sine", float(frequency_hz), v_nominal)
             _gen_settle(float(frequency_hz), should_stop)
-            if floor_scale is not None:
-                start_scale = nearest_scale(floor_scale)
-                # prepare_sine sets V/div from expected_vpp / 2.
-                prepare_vpp = start_scale * 2.0
-            else:
-                prepare_vpp = v_nominal if last_ok_vpp is None else last_ok_vpp
-                start_scale = seed_volts_per_div(prepare_vpp)
+            trigger_channel = input_channel if dual else scope_channel
+            trigger_ok = in_ok if dual else out_ok
+            trigger_floor = in_floor if dual else out_floor
+            start_scale, prepare_vpp = _channel_seed(v_nominal, trigger_ok, trigger_floor)
             scope.prepare_sine(
-                scope_channel,
+                trigger_channel,
                 float(frequency_hz),
                 prepare_vpp,
                 averages=averages,
             )
-            vertical_status, v_div, sample_vpp = _tune_vertical(
+            tuned = _tune_vertical(
                 scope,
-                scope_channel,
+                trigger_channel,
                 start_scale,
                 float(frequency_hz),
                 averages,
                 should_stop,
             )
-            v_scope = scope.measure_vpp(scope_channel, allow_rescale=False)
-            if not math.isfinite(v_scope) and sample_vpp is not None:
-                v_scope = sample_vpp
+            vertical_status, v_div, sample_vpp, offset_v = tuned
+            if dual:
+                scope.set_trigger_edge(input_channel, offset_v)
+                in_status, in_div = vertical_status, v_div
+                v_in = _apply_sample_vpp(
+                    scope.measure_vpp(input_channel, allow_rescale=False),
+                    sample_vpp,
+                )
+                in_ok, in_floor = _next_seed(in_status, v_in, in_div, in_ok)
+                out_scale, _out_prepare = _channel_seed(v_nominal, out_ok, out_floor)
+                out_status, out_div, out_sample, _out_offset = _tune_vertical(
+                    scope,
+                    scope_channel,
+                    out_scale,
+                    float(frequency_hz),
+                    averages,
+                    should_stop,
+                )
+                vertical_status, v_div, sample_vpp = out_status, out_div, out_sample
+            else:
+                in_status = in_div = None
+                v_in = float("nan")
+            v_scope = _apply_sample_vpp(
+                scope.measure_vpp(scope_channel, allow_rescale=False),
+                sample_vpp,
+            )
             f_scope = scope.measure_frequency(scope_channel)
             thd = float("nan")
             if vertical_status == "ok":
@@ -420,41 +502,61 @@ def run_sweep(
                     raise
                 except Exception as exc:
                     print(f"THD screen read failed: {exc}")
-            if vertical_status == "below_floor" and math.isfinite(v_scope):
-                floor_scale = v_div
-                last_ok_vpp = None
-            elif vertical_status == "ok" and math.isfinite(v_scope) and v_scope > 0:
-                last_ok_vpp = v_scope
-                floor_scale = None
-            else:
-                floor_scale = None
+            out_ok, out_floor = _next_seed(vertical_status, v_scope, v_div, out_ok)
             ratio = (
                 v_scope / v_nominal
                 if math.isfinite(v_scope) and v_nominal > 0
                 else float("nan")
             )
-            rows.append(
-                {
-                    "frequency_hz": float(frequency_hz),
-                    "v_requested_vpp": amplitude_vpp,
-                    "v_nominal_vpp": v_nominal,
-                    "v_scope_vpp": v_scope,
-                    "f_scope_hz": f_scope,
-                    "ratio": ratio,
-                    "ratio_db": _ratio_db(ratio),
-                    "scope_limited": bool(frequency_hz > scope_bw_hz),
-                    "v_div": v_div,
-                    "vertical_status": vertical_status,
-                    "thd": thd,
-                }
-            )
-            print(
+            row = {
+                "frequency_hz": float(frequency_hz),
+                "v_requested_vpp": amplitude_vpp,
+                "v_nominal_vpp": v_nominal,
+                "v_scope_vpp": v_scope,
+                "f_scope_hz": f_scope,
+                "ratio": ratio,
+                "ratio_db": _ratio_db(ratio),
+                "scope_limited": bool(frequency_hz > scope_bw_hz),
+                "v_div": v_div,
+                "vertical_status": vertical_status,
+                "thd": thd,
+            }
+            gain_db = float("nan")
+            phase = float("nan")
+            if dual:
+                assert input_channel is not None
+                gain = float("nan")
+                if in_status == "ok" and vertical_status == "ok":
+                    phase = scope.measure_phase(scope_channel, input_channel)
+                    if not math.isfinite(phase):
+                        _acquire_settle(float(frequency_hz), averages, should_stop)
+                        phase = scope.measure_phase(scope_channel, input_channel)
+                    if math.isfinite(v_scope) and math.isfinite(v_in) and v_in > 0:
+                        gain = v_scope / v_in
+                        gain_db = _ratio_db(gain)
+                row.update(
+                    {
+                        "v_in_vpp": v_in,
+                        "v_in_div": in_div,
+                        "v_in_status": in_status,
+                        "gain": gain,
+                        "gain_db": gain_db,
+                        "phase_deg": phase,
+                    }
+                )
+            rows.append(row)
+            message = (
                 f"{frequency_hz:12.4g} Hz  "
                 f"Vnom={v_nominal:.4g} Vpp  "
                 f"Vscope={v_scope:.4g} Vpp  "
                 f"ratio={_ratio_db(ratio):.2f} dB  "
                 f"{vertical_status}  THD={_format_thd(thd)}"
             )
+            if dual:
+                phase_txt = f"{phase:.2f} deg" if math.isfinite(phase) else "n/a"
+                gain_txt = f"{gain_db:.2f} dB" if math.isfinite(gain_db) else "n/a"
+                message += f"  Vin={v_in:.4g} Vpp  gain={gain_txt}  phase={phase_txt}"
+            print(message)
     except (SweepCancelled, KeyboardInterrupt):
         cancelled = True
         print("Sweep stopped")
@@ -476,6 +578,7 @@ def run_sweep(
         "oscilloscope_model": None if scope is None else scope.model_id,
         "gen_channel": gen_channel,
         "scope_channel": scope_channel,
+        "input_channel": input_channel,
         "load_ohm": None if math.isinf(load_ohm) else load_ohm,
         "load_highz": math.isinf(load_ohm),
         "f_min_hz": f_min_hz,
@@ -487,6 +590,7 @@ def run_sweep(
         "cancelled": cancelled,
         "scope_bw_hz": scope_bw_hz,
         "thd_definition": THD_DEFINITION,
+        "phase_definition": None if input_channel is None else PHASE_DEFINITION,
         "ratio_definition": (
             "V_scope / V_nominal, where V_nominal is the generator sine Vpp "
             "(max at each frequency by default, or min(requested, max) when --amplitude is set)"
@@ -551,7 +655,19 @@ def main() -> None:
         "--scope-channel",
         type=int,
         default=DEFAULT_SCOPE_CHANNEL,
-        help=f"Oscilloscope read channel (default: {DEFAULT_SCOPE_CHANNEL})",
+        help=(
+            f"Oscilloscope channel (default: {DEFAULT_SCOPE_CHANNEL}). "
+            "DUT output when --input-channel is set."
+        ),
+    )
+    parser.add_argument(
+        "--input-channel",
+        type=int,
+        default=None,
+        help=(
+            "Scope channel on the generator input. Omit for a single-channel sweep. "
+            "Must differ from --scope-channel."
+        ),
     )
     parser.add_argument(
         "--scope-bw",
@@ -580,6 +696,8 @@ def main() -> None:
 
     if args.amplitude is not None and args.amplitude <= 0:
         raise SystemExit("--amplitude must be positive when set")
+    if args.input_channel is not None and args.input_channel == args.scope_channel:
+        raise SystemExit("--input-channel and --scope-channel must differ")
 
     stop = threading.Event()
     previous_sigint = signal.getsignal(signal.SIGINT)
@@ -604,6 +722,7 @@ def main() -> None:
             scope_model=args.scope,
             averages=args.averages,
             should_stop=stop.is_set,
+            input_channel=args.input_channel,
         )
     finally:
         signal.signal(signal.SIGINT, previous_sigint)

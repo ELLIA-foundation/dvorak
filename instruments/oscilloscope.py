@@ -63,8 +63,19 @@ class Oscilloscope(ABC):
         """Measured frequency on one analog channel."""
 
     @abstractmethod
+    def measure_phase(self, channel: int, reference: int) -> float:
+        """Phase of ``channel`` relative to ``reference``, in degrees.
+
+        An invalid scope reading is NaN.
+        """
+
+    @abstractmethod
+    def set_trigger_edge(self, channel: int, level_v: float) -> None:
+        """Positive edge trigger on ``channel`` at ``level_v`` volts."""
+
+    @abstractmethod
     def set_vertical(self, channel: int, volts_per_div: float, offset_v: float) -> None:
-        """Set one channel's V/div and the voltage at the center of the screen."""
+        """Turn the channel on and set its V/div and center-screen voltage."""
 
     @abstractmethod
     def measure_voltage_span(self, channel: int) -> tuple[float, float, float]:

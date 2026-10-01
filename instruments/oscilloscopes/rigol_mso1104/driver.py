@@ -248,6 +248,34 @@ class RigolMSO1104(Oscilloscope):
     def measure_frequency(self, channel: int) -> float:
         return self._measure_item("FREQuency", channel)
 
+    def measure_phase(self, channel: int, reference: int) -> float:
+        if channel not in (1, 2, 3, 4) or reference not in (1, 2, 3, 4):
+            raise ValueError("MSO1104 analog channels are 1-4")
+        if channel == reference:
+            raise ValueError("Phase needs two different channels")
+        if self._scope is None:
+            self.connect()
+        try:
+            value = self._query_phase(channel, reference)
+        except pyvisa.VisaIOError:
+            self.close()
+            self.connect(timeout_ms=10_000)
+            value = self._query_phase(channel, reference)
+        if _is_invalid_measure(value):
+            return float("nan")
+        return value
+
+    def set_trigger_edge(self, channel: int, level_v: float) -> None:
+        if channel not in (1, 2, 3, 4):
+            raise ValueError("MSO1104 analog channels are 1-4")
+        if self._scope is None:
+            self.connect()
+        scope = self.visa
+        scope.write(":TRIGger:MODE EDGE")
+        scope.write(f":TRIGger:EDGe:SOURce CHAN{channel}")
+        scope.write(":TRIGger:EDGe:SLOPe POSitive")
+        scope.write(f":TRIGger:EDGe:LEVel {level_v}")
+
     def set_vertical(self, channel: int, volts_per_div: float, offset_v: float) -> None:
         if channel not in (1, 2, 3, 4):
             raise ValueError("MSO1104 analog channels are 1-4")
@@ -256,6 +284,7 @@ class RigolMSO1104(Oscilloscope):
         if self._scope is None:
             self.connect()
         scope = self.visa
+        scope.write(f":CHANnel{channel}:DISPlay ON")
         scope.write(f":CHANnel{channel}:SCALe {volts_per_div}")
         scope.write(f":CHANnel{channel}:OFFSet {offset_v}")
 
@@ -317,6 +346,17 @@ class RigolMSO1104(Oscilloscope):
         try:
             scope.write(f":MEASure:ITEM {item},CHANnel{channel}")
             raw = scope.query(f":MEASure:{item}? CHANnel{channel}").strip()
+            return float(raw)
+        finally:
+            scope.timeout = previous
+
+    def _query_phase(self, channel: int, reference: int) -> float:
+        scope = self.visa
+        previous = scope.timeout
+        scope.timeout = max(previous, 10_000)
+        try:
+            scope.write(f":MEASure:ITEM RPHase,CHANnel{channel},CHANnel{reference}")
+            raw = scope.query(f":MEASure:RPHase? CHANnel{channel},CHANnel{reference}").strip()
             return float(raw)
         finally:
             scope.timeout = previous

@@ -103,6 +103,7 @@ def _run_frequency(
     averages: int,
     stop_event: Event,
     run_name: str | None,
+    input_channel: int | None = None,
 ) -> str:
     sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
     payload = sweep.run_sweep(
@@ -117,6 +118,7 @@ def _run_frequency(
         scope_model,
         averages,
         should_stop=stop_event.is_set,
+        input_channel=input_channel,
     )
     payload["run_name"] = run_name
     if payload.get("cancelled") and not payload.get("rows"):
@@ -246,6 +248,10 @@ class MeasurementWindow(AnalysisWindow):
         self._freq_gen_ch.setRange(1, 2)
         self._freq_scope_ch = QSpinBox()
         self._freq_scope_ch.setRange(1, 4)
+        self._freq_in_ch = QSpinBox()
+        self._freq_in_ch.setRange(0, 4)
+        self._freq_in_ch.setSpecialValueText("none")
+        self._freq_in_ch.setValue(0)
         self._freq_bw = self._hz_box(1e8)
         self._freq_averages = self._averages_combo()
         self._freq_name = QLineEdit()
@@ -268,6 +274,7 @@ class MeasurementWindow(AnalysisWindow):
         freq_form.addRow("Load (ohm)", self._freq_load)
         freq_form.addRow("Generator channel", self._freq_gen_ch)
         freq_form.addRow("Scope channel", self._freq_scope_ch)
+        freq_form.addRow("Input channel", self._freq_in_ch)
         freq_form.addRow("Scope BW (Hz)", self._freq_bw)
         freq_form.addRow("Averages", self._freq_averages)
         freq_form.addRow("Run name", self._freq_name)
@@ -568,6 +575,14 @@ class MeasurementWindow(AnalysisWindow):
                 QMessageBox.warning(self, "Load", "Load must be ohms, or inf.")
                 return
         name = self._freq_name.text().strip() or None
+        input_channel = int(self._freq_in_ch.value()) or None
+        if input_channel is not None and input_channel == int(self._freq_scope_ch.value()):
+            QMessageBox.warning(
+                self,
+                "Input channel",
+                "Input channel must differ from the scope channel.",
+            )
+            return
         stop_event = Event()
         self._sweeping = True
         self._set_busy(True)
@@ -586,6 +601,7 @@ class MeasurementWindow(AnalysisWindow):
             int(self._freq_averages.currentData()),
             stop_event,
             name,
+            input_channel,
             cancel_event=stop_event,
             on_finished=self._run_ok,
             on_failed=self._run_fail,

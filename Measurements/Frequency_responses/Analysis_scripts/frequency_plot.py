@@ -12,6 +12,9 @@ from typing import Any
 def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any]:
     nom_x, nom_y = _column(rows, "v_nominal_vpp")
     scope_x, scope_y = _column(rows, "v_scope_vpp")
+    in_x, in_y = _column(rows, "v_in_vpp")
+    gain_x, gain_y = _column(rows, "gain_db")
+    phase_x, phase_y = _column(rows, "phase_deg")
     thd_x, thd_fraction = _column(rows, "thd")
     thd_y = [100.0 * value for value in thd_fraction]
     limited = any(_as_bool(row.get("scope_limited")) for row in rows)
@@ -31,7 +34,7 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
             "title": "Frequency response  V_scope / V_nominal",
             "y_title": "Ratio (dB)",
             "logx": True,
-            "series": _ratio_series(rows),
+            "series": _ratio_series(rows) + _gain_series(gain_x, gain_y),
             "vlines": vlines,
         },
         {
@@ -58,10 +61,46 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
                     "marker_size": 0.8,
                     "width": 2,
                 },
-            ],
+            ]
+            + (
+                [
+                    {
+                        "x": in_x,
+                        "y": in_y,
+                        "label": "V_in",
+                        "color": "#17becf",
+                        "line": "solid",
+                        "marker": "triangle",
+                        "marker_size": 0.8,
+                        "width": 2,
+                    }
+                ]
+                if in_x
+                else []
+            ),
             "vlines": [dict(item, label="") for item in vlines],
         },
     ]
+    if phase_x:
+        panels.append(
+            {
+                "y_title": "Phase (deg)",
+                "logx": True,
+                "series": [
+                    {
+                        "x": phase_x,
+                        "y": phase_y,
+                        "label": "output relative to input",
+                        "color": "#8c564b",
+                        "line": "solid",
+                        "marker": "circle",
+                        "marker_size": 0.8,
+                        "width": 2,
+                    }
+                ],
+                "vlines": [dict(item, label="") for item in vlines],
+            }
+        )
     if thd_x:
         panels.append(
             {
@@ -83,7 +122,8 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
             }
         )
     panels[-1]["x_title"] = "Frequency (Hz)"
-    height = 980 if thd_x else 720
+    extra = int(bool(thd_x)) + int(bool(phase_x))
+    height = 720 + 260 * extra
     return {
         "name": "frequency_response",
         "label": "Frequency response",
@@ -150,6 +190,23 @@ def _ratio_series(rows: list[dict]) -> list[dict[str, Any]]:
             }
         )
     return series
+
+
+def _gain_series(gain_x: list[float], gain_y: list[float]) -> list[dict[str, Any]]:
+    if not gain_x:
+        return []
+    return [
+        {
+            "x": gain_x,
+            "y": gain_y,
+            "label": "20 log10(V_out / V_in)",
+            "color": "#e377c2",
+            "line": "solid",
+            "marker": "square",
+            "marker_size": 0.8,
+            "width": 2,
+        }
+    ]
 
 
 def _vertical_status(row: dict) -> str:

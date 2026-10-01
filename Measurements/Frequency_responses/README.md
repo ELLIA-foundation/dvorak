@@ -27,6 +27,14 @@ scope Vpp. A below-floor point seeds the next point at that same floor scale. Ea
 
 An invalid `VMIN`/`VMAX` (the scope's `9.9e37`) is not treated as a small signal. The sweep reads the visible trace once: samples on the rails coarsen, and a short finite trace still fines. Repeated off-screen readings then take larger steps up the ladder. A below-floor seed is armed only when that point has a finite Vpp.
 
+Pass `--input-channel` (GUI: **Input channel**, default none) to measure the generator
+on a second scope channel. `--scope-channel` is then the DUT output. Each channel
+keeps its own V/div seed and is scaled to about 4–6 divisions, and the edge
+trigger stays on the input at that channel's center voltage. The sweep still
+stores `V_scope / V_nominal` and output THD, and adds `V_out / V_in` plus the
+scope's phase of the output relative to the input. Gain and phase are NaN unless
+both channels finish `ok`.
+
 On `ok` points the sweep downloads the visible trace and stores sine **THD** as a
 fraction: `sqrt(V2² + … + VH²) / V1`, fit at the commanded frequency. `H` is at
 most 10 and stops below 40% of the screen sample rate. Clipped and below-floor
@@ -42,10 +50,11 @@ python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_respons
 python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --amplitude 1 --no-show
 python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --scope rigol_mho954 --scope-bw 500e6 --no-show
 python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --averages 16 --no-show
+python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --scope-channel 2 --input-channel 1 --no-show
 ```
 
 - **Data/** — `freq_resp_<timestamp>.csv` and `.json`
-- **Data/plots/** — `freq_resp_<timestamp>.png` (dB ratio, V_nominal / V_scope, and THD when present)
+- **Data/plots/** — `freq_resp_<timestamp>.png` (dB ratio, V_nominal / V_scope, measured gain and phase when a second channel was used, and THD when present)
 - **Analysis_scripts/** — sweep protocol
 
 Use `open_oscilloscope()` and `open_generator()`, not a specific model module.
