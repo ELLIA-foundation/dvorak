@@ -9,7 +9,12 @@ import math
 from typing import Any
 
 
-def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any]:
+def frequency_spec(
+    rows: list[dict],
+    scope_bw_hz: float | None,
+    *,
+    logx: bool = True,
+) -> dict[str, Any]:
     nom_x, nom_y = _column(rows, "v_nominal_vpp")
     scope_x, scope_y = _column(rows, "v_scope_vpp")
     in_x, in_y = _column(rows, "v_in_vpp")
@@ -33,13 +38,13 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
         {
             "title": "Frequency response  V_scope / V_nominal",
             "y_title": "Ratio (dB)",
-            "logx": True,
+            "logx": logx,
             "series": _ratio_series(rows) + _gain_series(gain_x, gain_y),
             "vlines": vlines,
         },
         {
             "y_title": "Amplitude (Vpp)",
-            "logx": True,
+            "logx": logx,
             "series": [
                 {
                     "x": nom_x,
@@ -85,7 +90,7 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
         panels.append(
             {
                 "y_title": "Phase (deg)",
-                "logx": True,
+                "logx": logx,
                 "series": [
                     {
                         "x": phase_x,
@@ -105,7 +110,7 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
         panels.append(
             {
                 "y_title": "THD (%)",
-                "logx": True,
+                "logx": logx,
                 "series": [
                     {
                         "x": thd_x,
@@ -121,7 +126,12 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
                 "vlines": [dict(item, label="") for item in vlines],
             }
         )
-    panels[-1]["x_title"] = "Frequency (Hz)"
+    x_title = "Frequency (Hz)"
+    if not logx:
+        scale, unit = _linear_frequency_unit(rows)
+        x_title = f"Frequency ({unit})"
+        _scale_frequency_axis(panels, rows, scale)
+    panels[-1]["x_title"] = x_title
     extra = int(bool(thd_x)) + int(bool(phase_x))
     height = 720 + 260 * extra
     return {
@@ -132,6 +142,40 @@ def frequency_spec(rows: list[dict], scope_bw_hz: float | None) -> dict[str, Any
         "cols": 1,
         "panels": panels,
     }
+
+
+def _linear_frequency_unit(rows: list[dict]) -> tuple[float, str]:
+    peak = 0.0
+    for row in rows:
+        freq = _as_float(row.get("frequency_hz"))
+        if freq is not None and freq > peak:
+            peak = freq
+    if peak >= 1e6:
+        return 1e6, "MHz"
+    if peak >= 1e3:
+        return 1e3, "kHz"
+    return 1.0, "Hz"
+
+
+def _scale_frequency_axis(panels: list[dict[str, Any]], rows: list[dict], scale: float) -> None:
+    freqs = [
+        freq
+        for row in rows
+        if (freq := _as_float(row.get("frequency_hz"))) is not None and freq > 0
+    ]
+    lo = min(freqs) / scale if freqs else None
+    hi = max(freqs) / scale if freqs else None
+    for panel in panels:
+        panel["x_plain"] = True
+        if lo is not None and hi is not None:
+            panel["xmin"] = lo
+            panel["xmax"] = hi
+        if scale == 1.0:
+            continue
+        for series in panel.get("series") or []:
+            series["x"] = [float(value) / scale for value in series.get("x") or []]
+        for line in panel.get("vlines") or []:
+            line["x"] = float(line["x"]) / scale
 
 
 def _ratio_series(rows: list[dict]) -> list[dict[str, Any]]:

@@ -20,6 +20,7 @@ from pathlib import Path
 
 CAMPAIGN_SPARK_GAP = "Spark_Gap_Traces"
 CAMPAIGN_FREQUENCY_RESPONSES = "Frequency_responses"
+CAMPAIGN_WAVEFORMS = "waveforms"
 VIDEO_CONTAINER = "Videos"
 _VIDEO_SKIP_DIRS = {"Analysis_scripts"}
 _SESSION_SKIP_DIRS = {"plots"}

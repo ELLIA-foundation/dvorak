@@ -61,6 +61,10 @@ DEFAULT_RUN_NAME = "high_freq"
 DEFAULT_F_MIN_HZ = 100e6
 DEFAULT_F_MAX_HZ = 200e6
 DEFAULT_POINTS = 21
+FREQUENCY_SPACINGS = ("log", "linear")
+DEFAULT_FREQUENCY_SPACING = "log"
+# A linear grid is built from the step, so a very small step can request a huge run.
+MAX_SWEEP_POINTS = 10_001
 
 # Sine amplitude (Vpp). None = use max_sine_vpp(f) at each frequency; a float
 # caps the output (still clamped by the generator limit at that frequency).
@@ -118,13 +122,62 @@ PHASE_DEFINITION = (
 )
 
 
-def _logspace(f_min: float, f_max: float, points: int) -> np.ndarray:
+def linear_point_count(f_min: float, f_max: float, step_hz: float) -> int:
+    """How many frequencies a linear grid from ``f_min`` to ``f_max`` will use."""
+    _require_frequency_bounds(f_min, f_max)
+    if not math.isfinite(step_hz) or step_hz <= 0:
+        raise ValueError("frequency step must be positive")
+    n_steps = int(math.floor((f_max - f_min) / step_hz + 1e-9))
+    count = n_steps + 1
+    if f_max - (f_min + n_steps * step_hz) > step_hz * 1e-6:
+        count += 1
+    return count
+
+
+def linear_frequencies(f_min: float, f_max: float, step_hz: float) -> np.ndarray:
+    """Start at ``f_min``, step by ``step_hz``, and include ``f_max``."""
+    count = linear_point_count(f_min, f_max, step_hz)
+    if count > MAX_SWEEP_POINTS:
+        raise ValueError(
+            f"frequency step {step_hz:g} Hz from {f_min:g} Hz to {f_max:g} Hz "
+            f"is {count} points; increase the step (limit {MAX_SWEEP_POINTS})"
+        )
+    n_steps = int(math.floor((f_max - f_min) / step_hz + 1e-9))
+    frequencies = f_min + np.arange(n_steps + 1, dtype=float) * step_hz
+    if count > len(frequencies):
+        frequencies = np.append(frequencies, f_max)
+    else:
+        frequencies[-1] = f_max
+    frequencies[0] = f_min
+    return frequencies
+
+
+def _require_frequency_bounds(f_min: float, f_max: float) -> None:
     if f_min <= 0 or f_max <= 0:
         raise ValueError("Frequencies must be positive")
     if f_max < f_min:
         raise ValueError("--f-max must be >= --f-min")
+
+
+def _frequencies(
+    f_min: float,
+    f_max: float,
+    points: int,
+    spacing: str,
+    step_hz: float | None = None,
+) -> np.ndarray:
+    _require_frequency_bounds(f_min, f_max)
+    if spacing not in FREQUENCY_SPACINGS:
+        allowed = ", ".join(FREQUENCY_SPACINGS)
+        raise ValueError(f"spacing must be one of: {allowed}")
+    if spacing == "linear":
+        if step_hz is None:
+            raise ValueError("linear spacing requires a positive frequency step")
+        return linear_frequencies(f_min, f_max, step_hz)
     if points < 2:
         raise ValueError("--points must be at least 2")
+    if points > MAX_SWEEP_POINTS:
+        raise ValueError(f"--points must be at most {MAX_SWEEP_POINTS}")
     frequencies = np.logspace(math.log10(f_min), math.log10(f_max), points)
     # np.logspace can overshoot f_max slightly (e.g. 200e6 -> 200000000.00000003).
     frequencies[0] = f_min
@@ -248,10 +301,17 @@ def _figure_from_spec():
     raise RuntimeError("Could not find gui/dvorak_gui/mpl_spec.py")
 
 
-def _plot(rows: list[dict], output_path: Path, scope_bw_hz: float, show: bool) -> None:
+def _plot(
+    rows: list[dict],
+    output_path: Path,
+    scope_bw_hz: float,
+    show: bool,
+    *,
+    logx: bool = True,
+) -> None:
     import frequency_plot
 
-    spec = frequency_plot.frequency_spec(rows, scope_bw_hz)
+    spec = frequency_plot.frequency_spec(rows, scope_bw_hz, logx=logx)
     draw = _figure_from_spec()
     if show:
         fig = plt.figure()
@@ -279,6 +339,20 @@ def _screen_samples(scope, channel: int):
     return voltage_v
 
 
+def _screen_span(samples: np.ndarray | None) -> tuple[float, float, float] | None:
+    """Return (vmin, vmax, vavg) from the visible trace, or None."""
+    if samples is None:
+        return None
+    vmin, vmax = sample_span(samples)
+    if not (math.isfinite(vmin) and math.isfinite(vmax) and vmax > vmin):
+        return None
+    finite = np.asarray(samples, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size < 8:
+        return None
+    return vmin, vmax, float(np.mean(finite))
+
+
 def _tune_vertical(
     scope,
     channel: int,
@@ -287,66 +361,61 @@ def _tune_vertical(
     averages: int,
     should_stop: object,
 ) -> tuple[str, float, float | None, float]:
-    """Walk V/div until the trace fills the screen.
+    """Walk V/div until the on-screen trace fills the graticule.
 
-    Returns status, V/div, a sample Vpp when the scope's extrema were invalid
-    but the on-screen trace was usable, and the offset at screen center.
+    The scope's VPP/VMIN/VMAX queries can repeat a rescaled copy of the
+    previous acquisition for several readings after a V/div change, including
+    a stable value near half the real amplitude. The downloaded trace does
+    not, so the ladder follows that trace. The third return is that trace's
+    peak-to-peak voltage when the screen read succeeded.
+
+    Returns status, V/div, screen Vpp or None, and the offset at screen center.
     """
     scale = nearest_scale(start_scale)
     offset = 0.0
     previous: float | None = None
     clip_run = 0
-    fallback_vpp: float | None = None
+    screen_vpp: float | None = None
     for _ in range(len(vertical_ladder())):
         _raise_if_stopped(should_stop)
         scope.set_vertical(channel, scale, offset)
         _acquire_settle(frequency_hz, averages, should_stop)
-        vmin, vmax, vavg = scope.measure_voltage_span(channel)
+        samples = _screen_samples(scope, channel)
+        span = _screen_span(samples)
+        from_screen = span is not None
+        if from_screen:
+            vmin, vmax, vavg = span
+        else:
+            vmin, vmax, vavg = scope.measure_voltage_span(channel)
         if needs_recenter(offset, vavg, scale):
             offset = float(vavg)
             scope.set_vertical(channel, scale, offset)
             _acquire_settle(frequency_hz, averages, should_stop)
-            vmin, vmax, vavg = scope.measure_voltage_span(channel)
-        samples = None
-        measured = math.isfinite(vmin) and math.isfinite(vmax) and vmax > vmin
-        if not measured and clip_run == 0:
             samples = _screen_samples(scope, channel)
-        judge_min, judge_max = vmin, vmax
-        if not measured and samples is not None:
-            sample_min, sample_max = sample_span(samples)
-            if math.isfinite(sample_min) and math.isfinite(sample_max) and sample_max > sample_min:
-                judge_min, judge_max = sample_min, sample_max
-        action = decide_vertical(scale, offset, vmin, vmax, samples)
-        if not measured and action == "coarser":
+            span = _screen_span(samples)
+            from_screen = span is not None
+            if from_screen:
+                vmin, vmax, vavg = span
+            else:
+                vmin, vmax, vavg = scope.measure_voltage_span(channel)
+        measured = math.isfinite(vmin) and math.isfinite(vmax) and vmax > vmin
+        action = decide_vertical(scale, offset, vmin, vmax, samples if from_screen else None)
+        if from_screen:
+            clip_run = 0
+        elif not measured and action == "coarser":
             clip_run += 1
         else:
             clip_run = 0
-        fallback_vpp = None
-        if (
-            not measured
-            and action in {"ok", "below_floor"}
-            and math.isfinite(judge_min)
-            and math.isfinite(judge_max)
-            and judge_max > judge_min
-        ):
-            fallback_vpp = judge_max - judge_min
+        screen_vpp = (vmax - vmin) if from_screen and measured else None
         if action in {"ok", "below_floor", "clipped"}:
-            return action, scale, fallback_vpp, offset
+            return action, scale, screen_vpp, offset
         if action == "finer":
             nxt = next_finer(scale)
         else:
             nxt = coarser_by(scale, clip_run)
         if nxt is None or nxt == previous:
-            terminal = status_if_reversed(action, scale, offset, judge_min, judge_max)
-            kept = None
-            if (
-                terminal in {"ok", "below_floor"}
-                and not measured
-                and math.isfinite(judge_min)
-                and math.isfinite(judge_max)
-                and judge_max > judge_min
-            ):
-                kept = judge_max - judge_min
+            terminal = status_if_reversed(action, scale, offset, vmin, vmax)
+            kept = screen_vpp if terminal in {"ok", "below_floor"} else None
             return terminal, scale, kept, offset
         previous = scale
         scale = nxt
@@ -386,6 +455,22 @@ def _apply_sample_vpp(v_scope: float, sample_vpp: float | None) -> float:
     return sample_vpp
 
 
+def _recorded_vpp(status: str, measured_vpp: float, screen_vpp: float | None) -> float:
+    """Prefer the visible trace once the ladder has accepted the scale.
+
+    A clipped scale keeps the scope query: on some models that still reports
+    the over-range amplitude while the pixels sit on the rails.
+    """
+    if (
+        status in {"ok", "below_floor"}
+        and screen_vpp is not None
+        and math.isfinite(screen_vpp)
+        and screen_vpp > 0
+    ):
+        return screen_vpp
+    return _apply_sample_vpp(measured_vpp, screen_vpp)
+
+
 def _format_thd(thd: float) -> str:
     if not math.isfinite(thd):
         return "n/a"
@@ -405,6 +490,8 @@ def run_sweep(
     averages: int = DEFAULT_AVERAGES,
     should_stop: object = None,
     input_channel: int | None = None,
+    spacing: str = DEFAULT_FREQUENCY_SPACING,
+    step_hz: float | None = None,
 ) -> dict:
     if input_channel is not None:
         if input_channel not in (1, 2, 3, 4):
@@ -414,7 +501,8 @@ def run_sweep(
     if averages not in AVERAGE_CHOICES:
         allowed = ", ".join(str(item) for item in AVERAGE_CHOICES)
         raise ValueError(f"averages must be one of: {allowed}")
-    frequencies = _logspace(f_min_hz, f_max_hz, points)
+    frequencies = _frequencies(f_min_hz, f_max_hz, points, spacing, step_hz)
+    points = int(len(frequencies))
     gen = open_generator()
     scope = None
     gen_idn = ""
@@ -462,7 +550,8 @@ def run_sweep(
             if dual:
                 scope.set_trigger_edge(input_channel, offset_v)
                 in_status, in_div = vertical_status, v_div
-                v_in = _apply_sample_vpp(
+                v_in = _recorded_vpp(
+                    in_status,
                     scope.measure_vpp(input_channel, allow_rescale=False),
                     sample_vpp,
                 )
@@ -480,7 +569,8 @@ def run_sweep(
             else:
                 in_status = in_div = None
                 v_in = float("nan")
-            v_scope = _apply_sample_vpp(
+            v_scope = _recorded_vpp(
+                vertical_status,
                 scope.measure_vpp(scope_channel, allow_rescale=False),
                 sample_vpp,
             )
@@ -584,6 +674,8 @@ def run_sweep(
         "f_min_hz": f_min_hz,
         "f_max_hz": f_max_hz,
         "points": points,
+        "frequency_spacing": spacing,
+        "frequency_step_hz": None if spacing != "linear" else step_hz,
         "amplitude_requested_vpp": amplitude_vpp,
         "amplitude_mode": "max" if amplitude_vpp is None else "fixed",
         "averages": averages,
@@ -610,17 +702,40 @@ def save_sweep(payload: dict, *, show: bool = False) -> dict[str, Path]:
     plot_path = plots_dir / f"{stem}.png"
     _write_csv(csv_path, payload["rows"])
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    _plot(payload["rows"], plot_path, float(payload["scope_bw_hz"]), show=show)
+    _plot(
+        payload["rows"],
+        plot_path,
+        float(payload["scope_bw_hz"]),
+        show=show,
+        logx=payload.get("frequency_spacing") != "linear",
+    )
     return {"csv": csv_path, "json": json_path, "png": plot_path}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Log-sweep a sine and record V_scope / V_nominal into Frequency_responses/Data."
+        description="Sweep a sine and record V_scope / V_nominal into Frequency_responses/Data."
     )
     parser.add_argument("--f-min", type=float, default=DEFAULT_F_MIN_HZ, help="Start frequency in Hz (default: 1e3)")
     parser.add_argument("--f-max", type=float, default=DEFAULT_F_MAX_HZ, help="Stop frequency in Hz (default: 1e8)")
-    parser.add_argument("--points", type=int, default=DEFAULT_POINTS, help="Log-spaced points (default: 41)")
+    parser.add_argument(
+        "--points",
+        type=int,
+        default=DEFAULT_POINTS,
+        help=f"Number of frequencies for logarithmic spacing (default: {DEFAULT_POINTS})",
+    )
+    parser.add_argument(
+        "--spacing",
+        choices=FREQUENCY_SPACINGS,
+        default=DEFAULT_FREQUENCY_SPACING,
+        help=f"Frequency grid (default: {DEFAULT_FREQUENCY_SPACING})",
+    )
+    parser.add_argument(
+        "--step",
+        type=float,
+        default=None,
+        help="Frequency step in Hz. Required for --spacing linear; the point count is calculated.",
+    )
     parser.add_argument(
         "--amplitude",
         type=float,
@@ -698,6 +813,11 @@ def main() -> None:
         raise SystemExit("--amplitude must be positive when set")
     if args.input_channel is not None and args.input_channel == args.scope_channel:
         raise SystemExit("--input-channel and --scope-channel must differ")
+    if args.spacing == "linear":
+        if args.step is None or args.step <= 0:
+            raise SystemExit("--spacing linear requires a positive --step in Hz")
+    elif args.step is not None:
+        raise SystemExit("--step is only used with --spacing linear")
 
     stop = threading.Event()
     previous_sigint = signal.getsignal(signal.SIGINT)
@@ -723,6 +843,8 @@ def main() -> None:
             averages=args.averages,
             should_stop=stop.is_set,
             input_channel=args.input_channel,
+            spacing=args.spacing,
+            step_hz=args.step,
         )
     finally:
         signal.signal(signal.SIGINT, previous_sigint)

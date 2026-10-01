@@ -60,7 +60,7 @@ measurements on one canvas. Detect events is enough to open Metrics and Overlay.
 Metrics, Overlay, Compose, and frequency plots are drawn with matplotlib from
 the same JSON figure specs the analysis code builds.
 
-**Frequency response** plots a sweep (dB ratio and Vpp, log frequency).
+**Frequency response** plots a sweep (dB ratio and Vpp). The frequency axis matches the sweep spacing: logarithmic or linear.
 
 **Video Analysis** plays clips stored under `Measurements/Videos/<campaign>/`
 (MP4 or MOV, directly in the campaign folder). The left pane lists those
@@ -81,15 +81,17 @@ decodes the current campaign in the background. ffmpeg must be on `PATH`.
   and refuses a name that already exists. After capture it checks that the NPZ
   and JSON both exist.
 - The frequency sweep stays disabled until both the oscilloscope and the
-  generator succeed. **Averages** is a power-of-two dropdown (1 = normal);
+  generator succeed. **Spacing** is logarithmic (**Points**) or linear (**Step (Hz)**; the sample count is calculated). **Averages** is a power-of-two dropdown (1 = normal);
   the sweep waits one on-screen window per average before reading VPP.
   **Stop sweep** interrupts the loop (within ~0.1 s of the next wait), turns
   the generator off, and writes any points already collected.
 - Camera record stays disabled until the camera probe succeeds. The NDI
   runtime is required only for that probe and for recording.
 
-Spark-gap waveforms land in `Measurements/Spark_Gap_Traces/Data/<session>/`.
-Refresh the catalogue in an analysis window to open the new file.
+General oscilloscope traces land in `Measurements/waveforms/Data/<session>/`
+(the waveform panel defaults to that campaign). Spark-gap waveforms land in
+`Measurements/Spark_Gap_Traces/Data/<session>/`. Refresh the catalogue in an
+analysis window to open the new file.
 
 ## Add an analysis plugin
 

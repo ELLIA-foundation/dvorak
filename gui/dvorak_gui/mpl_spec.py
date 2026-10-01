@@ -62,6 +62,8 @@ def figure_from_spec(spec: dict[str, Any], fig: Figure | None = None) -> Figure:
 def _draw_panel(ax: Axes, panel: dict[str, Any]) -> None:
     if panel.get("logx"):
         ax.set_xscale("log")
+    elif panel.get("x_plain"):
+        ax.ticklabel_format(axis="x", useOffset=False, style="plain")
     if panel.get("logy"):
         ax.set_yscale("log")
 

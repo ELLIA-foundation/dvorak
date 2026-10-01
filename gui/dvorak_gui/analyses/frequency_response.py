@@ -56,7 +56,12 @@ class FrequencyWindow(AnalysisWindow):
             self._view.clear("This table has no frequency rows.")
             self.statusBar().showMessage("This table has no frequency rows.")
             return
-        spec = _plot.frequency_spec(rows, self._meta.get("scope_bw_hz"))
+        spacing = str(self._meta.get("frequency_spacing") or "log")
+        spec = _plot.frequency_spec(
+            rows,
+            self._meta.get("scope_bw_hz"),
+            logx=spacing != "linear",
+        )
         spec["name"] = record.stem
         png = _png_for(record)
         if png is not None:

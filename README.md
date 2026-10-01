@@ -23,14 +23,14 @@ Measurements/         One folder per campaign
   <Campaign>/
     Analysis_scripts/
     Data/             waveform_*.npz + .json, or video_*.mp4 + .json
-      <session>/      Spark-gap sessions (Legacy holds older captures)
+      <session>/      Session folders (waveforms; spark-gap Legacy holds older captures)
         plots/        Derived PNG/PDF and analysis_<stem>/
 ```
 
 Campaigns and tools import **roles** (`open_oscilloscope()`, `open_generator()`,
 `open_camera()`), never a specific model module. Swap the default scope by
 flipping `DEFAULT_OSCILLOSCOPE` in [`instruments/registry.py`](instruments/registry.py)
-(`OscilloscopeId.MSO1104` or `OscilloscopeId.MHO954`), or pass `--scope <model_id>`
+(`OscilloscopeId.MSO1104`, `OscilloscopeId.MHO954`, or `OscilloscopeId.DS4014`), or pass `--scope <model_id>`
 on a CLI. IPs stay in [`instruments/lab.json`](instruments/lab.json).
 
 ## Setup
@@ -59,13 +59,15 @@ is required only for the camera. See [gui/README.md](gui/README.md).
 ```powershell
 python tools\test_instruments.py
 python Measurements\Spark_Gap_Traces\Analysis_scripts\analyze_spark_gap.py --no-show
-python tools\capture_waveform.py --campaign Spark_Gap_Traces
+python Measurements\waveforms\Analysis_scripts\record_waveform.py --session bench --name check
+python tools\capture_waveform.py --campaign waveforms --session bench --name check
 python tools\plot_waveform.py --campaign Spark_Gap_Traces --no-show
 python tools\capture_video.py --campaign Camera_Check --duration 3
 ```
 
 MSO1104 connection quirks: [instruments/oscilloscopes/rigol_mso1104/CHEATSHEET.md](instruments/oscilloscopes/rigol_mso1104/CHEATSHEET.md).
 MHO954 connection quirks: [instruments/oscilloscopes/rigol_mho954/CHEATSHEET.md](instruments/oscilloscopes/rigol_mho954/CHEATSHEET.md).
+DS4014 connection quirks: [instruments/oscilloscopes/rigol_ds4014/CHEATSHEET.md](instruments/oscilloscopes/rigol_ds4014/CHEATSHEET.md).
 
 Spark-gap metrics: [Measurements/Spark_Gap_Traces/Analysis_scripts/SPARK_GAP_METRICS.md](Measurements/Spark_Gap_Traces/Analysis_scripts/SPARK_GAP_METRICS.md).
 

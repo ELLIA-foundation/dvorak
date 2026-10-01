@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from lib.paths import (
     CAMPAIGN_FREQUENCY_RESPONSES,
-    CAMPAIGN_SPARK_GAP,
+    CAMPAIGN_WAVEFORMS,
     campaign_data,
     campaign_session_data,
     list_campaigns,
@@ -72,7 +72,7 @@ def _capture_waveform(
     window: str,
     run_name: str,
 ) -> str:
-    acquire = load_campaign_module(CAMPAIGN_SPARK_GAP, "analyze_spark_gap")
+    acquire = load_campaign_module(CAMPAIGN_WAVEFORMS, "record_waveform")
     output_dir = campaign_session_data(campaign, session, create=True)
     npz_path, _run = acquire.acquire_waveform(
         model_id,
@@ -104,6 +104,8 @@ def _run_frequency(
     stop_event: Event,
     run_name: str | None,
     input_channel: int | None = None,
+    spacing: str = "log",
+    step_hz: float | None = None,
 ) -> str:
     sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
     payload = sweep.run_sweep(
@@ -119,6 +121,8 @@ def _run_frequency(
         averages,
         should_stop=stop_event.is_set,
         input_channel=input_channel,
+        spacing=spacing,
+        step_hz=step_hz,
     )
     payload["run_name"] = run_name
     if payload.get("cancelled") and not payload.get("rows"):
@@ -175,7 +179,7 @@ class MeasurementWindow(AnalysisWindow):
         )
 
         roles = load_lab().get("roles") or {}
-        campaigns = list_campaigns() or [CAMPAIGN_SPARK_GAP]
+        campaigns = list_campaigns() or [CAMPAIGN_WAVEFORMS]
 
         self._scope_model = self._model_combo(list_oscilloscopes(), roles.get(_ROLE_SCOPE))
         self._gen_model = self._model_combo(list_generators(), roles.get(_ROLE_GEN))
@@ -196,7 +200,7 @@ class MeasurementWindow(AnalysisWindow):
         form.addRow("Generator", self._role_row(self._gen_model, self._gen_btn, self._gen_status))
         form.addRow("Camera", self._role_row(self._camera_model, self._camera_btn, self._camera_status))
 
-        self._wave_campaign = self._campaign_combo(campaigns, CAMPAIGN_SPARK_GAP)
+        self._wave_campaign = self._campaign_combo(campaigns, CAMPAIGN_WAVEFORMS)
         self._wave_campaign.currentTextChanged.connect(self._on_wave_campaign_changed)
         self._wave_session = QComboBox()
         self._wave_session.currentIndexChanged.connect(self._update_wave_preview)
@@ -241,6 +245,11 @@ class MeasurementWindow(AnalysisWindow):
         self._freq_points = QSpinBox()
         self._freq_points.setRange(2, 401)
         self._freq_points.setValue(41)
+        self._freq_spacing = QComboBox()
+        self._freq_spacing.addItem("Logarithmic", "log")
+        self._freq_spacing.addItem("Linear", "linear")
+        self._freq_step = self._hz_box(1e6)
+        self._freq_step_count = QLabel("")
         self._freq_amp = QLineEdit()
         self._freq_amp.setPlaceholderText("blank = generator maximum")
         self._freq_load = QLineEdit("50")
@@ -267,9 +276,18 @@ class MeasurementWindow(AnalysisWindow):
         freq_actions_layout.addWidget(self._freq_stop_btn)
         freq = QGroupBox("Frequency response")
         freq_form = QFormLayout(freq)
+        self._freq_form = freq_form
         freq_form.addRow("f min (Hz)", self._freq_min)
         freq_form.addRow("f max (Hz)", self._freq_max)
         freq_form.addRow("Points", self._freq_points)
+        freq_form.addRow("Spacing", self._freq_spacing)
+        freq_form.addRow("Step (Hz)", self._freq_step)
+        freq_form.addRow("Samples", self._freq_step_count)
+        self._freq_spacing.currentIndexChanged.connect(self._sync_freq_spacing)
+        self._freq_min.valueChanged.connect(self._sync_freq_spacing)
+        self._freq_max.valueChanged.connect(self._sync_freq_spacing)
+        self._freq_step.valueChanged.connect(self._sync_freq_spacing)
+        self._sync_freq_spacing()
         freq_form.addRow("Amplitude Vpp", self._freq_amp)
         freq_form.addRow("Load (ohm)", self._freq_load)
         freq_form.addRow("Generator channel", self._freq_gen_ch)
@@ -575,6 +593,19 @@ class MeasurementWindow(AnalysisWindow):
                 QMessageBox.warning(self, "Load", "Load must be ohms, or inf.")
                 return
         name = self._freq_name.text().strip() or None
+        spacing = str(self._freq_spacing.currentData())
+        step_hz = float(self._freq_step.value()) if spacing == "linear" else None
+        if step_hz is not None:
+            sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
+            try:
+                sweep.linear_frequencies(
+                    float(self._freq_min.value()),
+                    float(self._freq_max.value()),
+                    step_hz,
+                )
+            except ValueError as exc:
+                QMessageBox.warning(self, "Frequency step", str(exc))
+                return
         input_channel = int(self._freq_in_ch.value()) or None
         if input_channel is not None and input_channel == int(self._freq_scope_ch.value()):
             QMessageBox.warning(
@@ -602,10 +633,36 @@ class MeasurementWindow(AnalysisWindow):
             stop_event,
             name,
             input_channel,
+            spacing,
+            step_hz,
             cancel_event=stop_event,
             on_finished=self._run_ok,
             on_failed=self._run_fail,
         )
+
+    def _sync_freq_spacing(self, *_args: object) -> None:
+        linear = str(self._freq_spacing.currentData()) == "linear"
+        self._freq_form.setRowVisible(self._freq_points, not linear)
+        self._freq_form.setRowVisible(self._freq_step, linear)
+        self._freq_form.setRowVisible(self._freq_step_count, linear)
+        if not linear:
+            return
+        sweep = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "sweep_frequency_response")
+        try:
+            count = sweep.linear_point_count(
+                float(self._freq_min.value()),
+                float(self._freq_max.value()),
+                float(self._freq_step.value()),
+            )
+        except ValueError as exc:
+            self._freq_step_count.setText(str(exc))
+            return
+        if count > sweep.MAX_SWEEP_POINTS:
+            self._freq_step_count.setText(
+                f"{count} points — increase the step (limit {sweep.MAX_SWEEP_POINTS})"
+            )
+            return
+        self._freq_step_count.setText(str(count))
 
     def _stop_sweep(self) -> None:
         self._workers["run"].request_stop()

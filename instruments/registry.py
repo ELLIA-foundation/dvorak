@@ -19,6 +19,7 @@ class OscilloscopeId(StrEnum):
 
     MSO1104 = "rigol_mso1104"
     MHO954 = "rigol_mho954"
+    DS4014 = "rigol_ds4014"
 
 
 # Flip this to change what open_oscilloscope() / CLIs use when --scope is omitted.
@@ -48,12 +49,14 @@ def _role_model(role: str, model_id: str | None, config: dict[str, Any]) -> str:
 
 
 def _oscilloscope_classes() -> dict[str, type[Oscilloscope]]:
+    from instruments.oscilloscopes.rigol_ds4014.driver import RigolDS4014
     from instruments.oscilloscopes.rigol_mho954.driver import RigolMHO954
     from instruments.oscilloscopes.rigol_mso1104.driver import RigolMSO1104
 
     return {
         OscilloscopeId.MSO1104: RigolMSO1104,
         OscilloscopeId.MHO954: RigolMHO954,
+        OscilloscopeId.DS4014: RigolDS4014,
     }
 
 

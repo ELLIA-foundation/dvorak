@@ -61,7 +61,7 @@ def main() -> None:
         "--session",
         type=str,
         default=None,
-        help="Session folder under Data/ (Spark_Gap_Traces: Data/<session>/)",
+        help="Session folder under Data/ (waveforms and Spark_Gap_Traces: Data/<session>/)",
     )
     parser.add_argument(
         "--name",
