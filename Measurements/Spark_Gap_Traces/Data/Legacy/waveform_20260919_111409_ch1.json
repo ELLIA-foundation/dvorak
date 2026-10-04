@@ -1,0 +1,23 @@
+{
+  "idn": "RIGOL TECHNOLOGIES,MSO1104Z,DS1ZC170900250,00.04.02.SP4",
+  "resource": "TCPIP0::192.168.147.110::inst0::INSTR",
+  "channel": 1,
+  "mode": "RAW",
+  "points": 6000000,
+  "sample_rate_hz": 1000000000.0,
+  "memory_depth": "AUTO",
+  "timebase_s_div": 0.0005,
+  "time_offset_s": 0.00066,
+  "channel_scale_v_div": 5000.0,
+  "channel_offset_v": 0.0,
+  "probe_ratio": 1000.0,
+  "x_increment_s": 1e-09,
+  "x_origin_s": -0.00234,
+  "x_reference": 0,
+  "y_increment_v": 200.0,
+  "y_origin_v": 0.0,
+  "y_reference": 127,
+  "y_scale_source": "channel_scale/25",
+  "trigger_status": "STOP",
+  "captured_at": "2026-09-19T11:14:09"
+}
