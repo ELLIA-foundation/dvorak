@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import ROOT
 
+from .text import root_text
+
 # PyROOT deletes C++ objects when their Python wrapper is collected. ROOT still
 # points at primitives on a canvas, so dropping a wrapper use-after-frees the
 # next draw. Hold every object for the life of the renderer process.
@@ -58,11 +60,6 @@ def color_of(value: str | None, fallback: str = "#1f77b4") -> int:
         blue = int(text[5:7], 16)
         return int(ROOT.TColor.GetColor(red, green, blue))
     return int(ROOT.TColor.GetColor(31, 119, 180))
-
-
-def root_text(text: str) -> str:
-    """Turn a Unicode micro sign into the TLatex token ROOT already knows."""
-    return str(text).replace("µ", "#mu")
 
 
 def style_pad(pad, *, compact: bool = False, titled: bool = False) -> None:
@@ -131,4 +128,10 @@ def line_style(name: str | None) -> int:
 
 
 def marker_style(name: str | None) -> int:
-    return {"circle": 20, "square": 21, "none": 0}.get(name or "none", 0)
+    return {
+        "circle": 20,
+        "square": 21,
+        "triangle": 22,
+        "plus": 2,
+        "none": 0,
+    }.get(name or "none", 0)

@@ -5,11 +5,14 @@ gitignored. Analysis machines on the Analysis branch run this to pick up new
 lab captures without merging the rest of master.
 
 Data/ has two owners. This branch keeps GUI analysis artifacts under
-Data/plots/; master owns the raw files beside them. The script commits
-those plot artifacts first, then checks out only raw Data/ files.
+any ``plots/`` directory in ``Data/`` (``Data/plots/`` or
+``Data/<session>/plots/``); master owns the raw files beside them. The
+script commits those plot artifacts first, then checks out only raw Data/
+files. ``Measurements/X123_Spectra/`` stays on this branch.
 
 By default Analysis_scripts on this branch stay put. Pass --all to update
-the rest of Measurements/ (still leaving Data/plots/ alone).
+the rest of Measurements/ (still leaving those plots/ folders, and
+X123_Spectra, alone).
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from pathlib import Path
 REF_DEFAULT = "origin/master"
 COMMIT_MESSAGE = "Save analysis artifacts from GUI pipeline"
 VIDEO_CONTAINER = "Videos"
+SPECTRA_CONTAINER = "X123_Spectra"
 CHECKOUT_BATCH = 200
 _IN_PROGRESS = (
     ("MERGE_HEAD", "merge"),
@@ -83,14 +87,29 @@ def _ref_exists(root: Path, ref: str) -> bool:
     return result.returncode == 0
 
 
-def _is_plots_path(path: str) -> bool:
+def _is_spectra_path(path: str) -> bool:
     parts = Path(path).parts
     return (
-        len(parts) >= 4
+        len(parts) >= 2
         and parts[0] == "Measurements"
-        and parts[2] == "Data"
-        and parts[3] == "plots"
+        and parts[1] == SPECTRA_CONTAINER
     )
+
+
+def _plots_part_index(parts: tuple[str, ...]) -> int | None:
+    """Index of a ``plots`` folder under ``Measurements/<campaign>/Data/``."""
+    if len(parts) < 4 or parts[0] != "Measurements" or parts[2] != "Data":
+        return None
+    if parts[1] in {VIDEO_CONTAINER, SPECTRA_CONTAINER}:
+        return None
+    for index, part in enumerate(parts[3:], start=3):
+        if part == "plots":
+            return index
+    return None
+
+
+def _is_plots_path(path: str) -> bool:
+    return _plots_part_index(Path(path).parts) is not None
 
 
 def _is_raw_data_path(path: str) -> bool:
@@ -99,7 +118,8 @@ def _is_raw_data_path(path: str) -> bool:
         len(parts) >= 4
         and parts[0] == "Measurements"
         and parts[2] == "Data"
-        and parts[3] != "plots"
+        and parts[1] not in {VIDEO_CONTAINER, SPECTRA_CONTAINER}
+        and _plots_part_index(parts) is None
     )
 
 
@@ -124,7 +144,7 @@ def _iter_campaign_dirs(root: Path) -> list[Path]:
         for campaign in sorted(measurements.iterdir())
         if campaign.is_dir()
         and not campaign.name.startswith(".")
-        and campaign.name != VIDEO_CONTAINER
+        and campaign.name not in {VIDEO_CONTAINER, SPECTRA_CONTAINER}
     ]
 
 
@@ -137,11 +157,19 @@ def _local_data_dirs(root: Path) -> list[str]:
 
 
 def _local_plots_dirs(root: Path) -> list[str]:
-    return [
-        str((campaign / "Data" / "plots").relative_to(root))
-        for campaign in _iter_campaign_dirs(root)
-        if (campaign / "Data" / "plots").is_dir()
-    ]
+    found: list[str] = []
+    for campaign in _iter_campaign_dirs(root):
+        data = campaign / "Data"
+        if not data.is_dir():
+            continue
+        for plots in sorted(data.rglob("plots")):
+            if not plots.is_dir():
+                continue
+            relative = plots.relative_to(data)
+            if "plots" in relative.parts[:-1]:
+                continue
+            found.append(str(plots.relative_to(root)))
+    return found
 
 
 def _nul_paths(text: str) -> set[str]:
@@ -192,7 +220,7 @@ def _checkout_files(root: Path, ref: str, all_tree: bool) -> list[str]:
         if not specs:
             _die(f"no Measurements/<campaign>/Data folders on {ref}")
         files = _ref_files(root, ref, *specs)
-    return [path for path in files if not _is_plots_path(path)]
+    return [path for path in files if not _is_plots_path(path) and not _is_spectra_path(path)]
 
 
 def _checkout_ref_files(root: Path, ref: str, files: list[str]) -> None:
@@ -270,7 +298,11 @@ def _extra_paths(root: Path, ref: str, pathspecs: list[str]) -> list[str]:
     if on_ref.returncode != 0:
         _die(f"git ls-tree {ref} failed", on_ref.stderr)
     extras = _nul_paths(listed.stdout) - _nul_paths(on_ref.stdout)
-    return sorted(path for path in extras if not _is_plots_path(path))
+    return sorted(
+        path
+        for path in extras
+        if not _is_plots_path(path) and not _is_spectra_path(path)
+    )
 
 
 def _remove_paths_missing_from_ref(root: Path, ref: str, pathspecs: list[str]) -> int:
@@ -292,7 +324,7 @@ def _print_paths(title: str, paths: list[str]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Fetch origin, save GUI analysis artifacts under Data/plots/, "
+            "Fetch origin, save GUI analysis artifacts under Data/ plots folders, "
             "then check out raw campaign Data/ from origin/master. "
             "NPZ/JSON are tracked; PNG/PDF/MP4 stay gitignored."
         )
@@ -306,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Also update Analysis_scripts and the rest of Measurements/, except Data/plots/",
+        help="Also update Analysis_scripts and the rest of Measurements/, except plots/ under Data/ and X123_Spectra/",
     )
     parser.add_argument(
         "--offline",
@@ -321,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-commit",
         action="store_true",
-        help="Do not commit Data/plots/; still check out raw captures only",
+        help="Do not commit Data/ plots folders; still check out raw captures only",
     )
     args = parser.parse_args(argv)
 

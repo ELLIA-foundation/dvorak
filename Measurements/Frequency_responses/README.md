@@ -12,6 +12,12 @@ Default scope is `DEFAULT_OSCILLOSCOPE` (MSO1104Z, 100 MHz). Use `--scope rigol_
 for the MHO954 (500 MHz with 1–2 channels on; 400 MHz with 3–4) and pass
 `--scope-bw 500e6`. Points above `--scope-bw` are stored with `scope_limited: true`.
 
+Sweeps written on master may also store `v_div`, `vertical_status`, and sine `thd`
+(a fraction). The analysis figure keeps one ratio series when `vertical_status`
+is absent. When it is present, `ok` points stay on the ratio line, `below_floor`
+is a gray plus, and `clipped` is a red triangle. A finite `thd` column adds a
+third panel in percent.
+
 ```powershell
 python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --no-show
 python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_response.py --f-min 1e3 --f-max 100e6 --points 41 --load 50 --no-show
@@ -20,7 +26,7 @@ python Measurements\Frequency_responses\Analysis_scripts\sweep_frequency_respons
 ```
 
 - **Data/** — `freq_resp_<timestamp>.csv` and `.json`
-- **Data/plots/** — `freq_resp_<timestamp>.png` (dB ratio plus V_nominal / V_scope)
+- **Data/plots/** — `freq_resp_<timestamp>.png` (dB ratio, V_nominal / V_scope, and THD when present)
 - **Analysis_scripts/** — sweep protocol
 
 Use `open_oscilloscope()` and `open_generator()`, not a specific model module.

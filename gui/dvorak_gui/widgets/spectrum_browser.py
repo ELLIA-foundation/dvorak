@@ -5,8 +5,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from shiboken6 import isValid
+from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -20,12 +21,58 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from lib.paths import list_spectrum_campaigns, list_spectrum_files, spectra_dir
+from lib.paths import collect_mca_files, list_spectrum_campaigns, list_spectrum_files, spectra_dir
 
 from .figure_gallery import reveal_in_folder
+from .spectrum_import import run_mca_import
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 CAMPAIGN_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def _mca_from_mime(mime) -> list[Path]:
+    if mime is None or not mime.hasUrls():
+        return []
+    raw: list[Path] = []
+    for url in mime.urls():
+        if url.isLocalFile():
+            raw.append(Path(url.toLocalFile()))
+    return collect_mca_files(raw)
+
+
+class _McaDropFilter(QObject):
+    """Accept Finder drops of ``.mca`` files onto the spectrum tree."""
+
+    def __init__(self, tree: QTreeWidget, on_drop) -> None:
+        super().__init__(tree)
+        self._tree = tree
+        self._on_drop = on_drop
+        viewport = tree.viewport()
+        viewport.setAcceptDrops(True)
+        viewport.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if not isValid(self._tree):
+            return False
+        if watched is not self._tree.viewport():
+            return False
+        kind = event.type()
+        if kind in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            if not isinstance(event, (QDragEnterEvent, QDropEvent)):
+                return False
+            if not _mca_from_mime(event.mimeData()):
+                return False
+            event.acceptProposedAction()
+            return True
+        if kind == QEvent.Type.Drop and isinstance(event, QDropEvent):
+            paths = _mca_from_mime(event.mimeData())
+            if not paths:
+                return False
+            item = self._tree.itemAt(event.position().toPoint())
+            self._on_drop(paths, item)
+            event.acceptProposedAction()
+            return True
+        return False
 
 
 class SpectrumBrowser(QWidget):
@@ -33,6 +80,7 @@ class SpectrumBrowser(QWidget):
 
     current_file_changed = Signal(object)
     selection_changed = Signal()
+    status_message = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -81,6 +129,46 @@ class SpectrumBrowser(QWidget):
     def has_campaigns(self) -> bool:
         return self._tree.topLevelItemCount() > 0
 
+    def new_session(self, sources: list[Path] | None = None) -> None:
+        """Create ``X123_Spectra/<session>/Data/`` and copy MCA files into it."""
+        self._import(campaign=None, sources=sources)
+
+    def import_mca(self, campaign: str, sources: list[Path] | None = None) -> None:
+        """Copy MCA files into an existing session's Data folder."""
+        self._import(campaign=campaign, sources=sources)
+
+    def focus_paths(self, paths: list[Path]) -> None:
+        wanted = {path.resolve() for path in paths}
+        if not wanted:
+            return
+        self._search.clear()
+        first: QTreeWidgetItem | None = None
+        self._tree.blockSignals(True)
+        try:
+            self._tree.clearSelection()
+            for index in range(self._tree.topLevelItemCount()):
+                parent = self._tree.topLevelItem(index)
+                if parent is None:
+                    continue
+                for row in range(parent.childCount()):
+                    child = parent.child(row)
+                    if child is None:
+                        continue
+                    stored = child.data(0, PATH_ROLE)
+                    if isinstance(stored, Path) and stored.resolve() in wanted:
+                        child.setSelected(True)
+                        parent.setExpanded(True)
+                        if first is None:
+                            first = child
+            if first is not None:
+                self._tree.setCurrentItem(first)
+                self._tree.scrollToItem(first)
+        finally:
+            self._tree.blockSignals(False)
+        self._update_count_label()
+        self.current_file_changed.emit(self.current_file())
+        self.selection_changed.emit()
+
     def refresh(self) -> None:
         query = self._search.text()
         current = self.current_file()
@@ -125,15 +213,22 @@ class SpectrumBrowser(QWidget):
 
     def _build(self) -> None:
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search campaigns and spectra…")
+        self._search.setPlaceholderText("Search sessions and spectra…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._apply_filter)
+
+        new_btn = QPushButton("New session…")
+        new_btn.setToolTip(
+            "Create Measurements/X123_Spectra/<session>/Data/ and copy .mca files into it."
+        )
+        new_btn.clicked.connect(lambda: self.new_session())
 
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self.refresh)
 
         search_row = QHBoxLayout()
         search_row.addWidget(self._search, stretch=1)
+        search_row.addWidget(new_btn)
         search_row.addWidget(refresh_btn)
 
         root = spectra_dir()
@@ -152,6 +247,7 @@ class SpectrumBrowser(QWidget):
         self._tree.customContextMenuRequested.connect(self._show_context_menu)
         self._tree.currentItemChanged.connect(self._on_current_changed)
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._drop_filter = _McaDropFilter(self._tree, self._on_mca_dropped)
 
         self._count_label = QLabel()
         self._count_label.setStyleSheet("color: palette(mid);")
@@ -200,7 +296,8 @@ class SpectrumBrowser(QWidget):
             campaigns += 1
             files += visible_children
         selected = len(self.selected_files())
-        text = f"{files} spectra in {campaigns} campaigns"
+        session_word = "session" if campaigns == 1 else "sessions"
+        text = f"{files} spectra in {campaigns} {session_word}"
         if selected:
             text += f" · {selected} selected"
         self._count_label.setText(text)
@@ -222,13 +319,52 @@ class SpectrumBrowser(QWidget):
         self._update_count_label()
         self.current_file_changed.emit(path)
 
+    def _campaign_name(self, item: QTreeWidgetItem | None) -> str | None:
+        if item is None:
+            return None
+        stored = item.data(0, CAMPAIGN_ROLE)
+        if isinstance(stored, str) and stored:
+            return stored
+        if item.parent() is None:
+            return item.text(0)
+        parent = item.parent()
+        return parent.text(0) if parent is not None else None
+
+    def _import(self, *, campaign: str | None, sources: list[Path] | None) -> None:
+        result = run_mca_import(self, campaign=campaign, sources=sources)
+        if result is None:
+            return
+        folder, written = result
+        self.refresh()
+        if written:
+            self.focus_paths(written)
+            noun = "file" if len(written) == 1 else "files"
+            self.status_message.emit(f"Copied {len(written)} MCA {noun} into {folder}")
+            return
+        self.status_message.emit(f"Session {folder} is ready for .mca files")
+
+    def _on_mca_dropped(self, paths: list[Path], item: QTreeWidgetItem | None) -> None:
+        campaign = self._campaign_name(item)
+        if campaign:
+            self.import_mca(campaign, paths)
+            return
+        self.new_session(paths)
+
     def _show_context_menu(self, pos) -> None:
         item = self._tree.itemAt(pos)
+        menu = QMenu(self)
         if item is None:
+            menu.addAction("New session…", lambda: self.new_session())
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
             return
+        campaign = self._campaign_name(item)
         stored = item.data(0, PATH_ROLE)
         target = stored if isinstance(stored, Path) else spectra_dir() / item.text(0)
-        menu = QMenu(self)
+        if campaign:
+            menu.addAction(
+                "Import MCA files…",
+                lambda name=campaign: self.import_mca(name),
+            )
         reveal = QAction(
             "Reveal in Finder" if sys.platform == "darwin" else "Show in folder",
             self,

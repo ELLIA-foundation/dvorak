@@ -157,6 +157,22 @@ def _detect_events(
     return _payload_from_result(result)
 
 
+def _prepare_figure_pack() -> None:
+    """Import the figure pack on the GUI thread.
+
+    ``spark_gap_report`` imports pyplot. With PySide already loaded, doing
+    that for the first time on the analysis worker selects the Qt backend
+    and aborts the process on macOS.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    load_campaign_module(CAMPAIGN_SPARK_GAP, "spark_gap_report")
+
+
+_prepare_figure_pack()
+
+
 def _run_full_analysis(
     npz_path: Path,
     out_dir: Path,
@@ -166,10 +182,7 @@ def _run_full_analysis(
     metadata: dict[str, Any],
     run: dict[str, Any],
 ) -> dict[str, Any]:
-    """Write the CLI figure pack. Load matplotlib Agg only on this thread."""
-    import matplotlib
-
-    matplotlib.use("Agg", force=True)
+    """Write the CLI figure pack. Matplotlib is already loaded on the GUI thread."""
     report = load_campaign_module(CAMPAIGN_SPARK_GAP, "spark_gap_report")
     result = report.run_analysis(
         npz_path,
@@ -693,9 +706,9 @@ class SparkGapWindow(AnalysisWindow):
             self._chosen.path,
             out_dir,
             params,
-            self._time_s,
-            self._voltage_v,
-            self._loaded_meta,
+            self._time_s.copy(),
+            self._voltage_v.copy(),
+            dict(self._loaded_meta),
             run,
             on_finished=self._receive_analysis,
             on_failed=self._receive_analysis_failed,

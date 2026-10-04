@@ -22,8 +22,10 @@ tools/                Capture, plot, and connection tests (not model-specific)
 Measurements/         One folder per campaign
   <Campaign>/
     Analysis_scripts/
-    Data/             waveform_*.npz + .json, or video_*.mp4 + .json
-      plots/          Derived PNG/PDF and analysis_<stem>/
+    Data/             waveform_*.npz + .json, freq tables, or video
+      plots/          Figures for captures stored directly in Data/
+      <session>/      Session folder (spark gap uses Legacy and later names)
+        plots/        Derived PNG/PDF and analysis_<stem>/
 ```
 
 Campaigns and tools import **roles** (`open_oscilloscope()`, `open_generator()`,

@@ -178,6 +178,7 @@ class FrequencyWindow(AnalysisWindow):
             self._controller.root,
             self._export_worker,
             self._spec_payload,
+            view=self._view,
             on_status=self.statusBar().showMessage,
         )
 

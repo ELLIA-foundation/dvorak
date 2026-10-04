@@ -103,6 +103,10 @@ class AppController(QObject):
 
 def main(argv: list[str] | None = None) -> int:
     _ensure_repo_on_path()
+    import pyqtgraph as pg
+
+    # ViewBox menu label "1 button": left-drag zooms to a rectangle.
+    pg.setConfigOptions(leftButtonPan=False)
     from .analyses import load_plugins
 
     load_plugins()

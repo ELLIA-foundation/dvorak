@@ -14,7 +14,7 @@ for _parent in Path(__file__).resolve().parents:
 else:
     raise SystemExit("Could not find repository root (expected lib/paths.py and Measurements/).")
 
-from lib.paths import campaign_data, campaign_plots, infer_campaign, list_campaigns
+from lib.paths import campaign_data, campaign_plots, infer_campaign, infer_session, list_campaigns
 from lib.waveform import DEFAULT_MAX_POINTS, latest_capture, plot_waveform
 
 
@@ -34,7 +34,7 @@ def main() -> None:
         nargs="?",
         type=Path,
         default=None,
-        help="Path to .npz file (default: latest in the campaign Data/ folder)",
+        help="Path to .npz file (default: latest in the campaign Data/ folder or a session)",
     )
     parser.add_argument(
         "--campaign",
@@ -75,11 +75,14 @@ def main() -> None:
 
     save_path = args.save
     if save_path is None and args.no_show:
-        campaign = args.campaign or infer_campaign(npz_path)
-        if campaign:
-            save_path = campaign_plots(campaign) / f"{npz_path.stem}.png"
+        if infer_session(npz_path):
+            save_path = npz_path.parent / "plots" / f"{npz_path.stem}.png"
         else:
-            save_path = npz_path.with_suffix(".png")
+            campaign = args.campaign or infer_campaign(npz_path)
+            if campaign:
+                save_path = campaign_plots(campaign) / f"{npz_path.stem}.png"
+            else:
+                save_path = npz_path.with_suffix(".png")
 
     saved = plot_waveform(
         npz_path,

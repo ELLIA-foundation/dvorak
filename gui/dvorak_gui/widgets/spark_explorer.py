@@ -24,9 +24,11 @@ from PySide6.QtWidgets import (
 )
 
 from lib.paths import CAMPAIGN_SPARK_GAP
+from lib.waveform import DEFAULT_MAX_POINTS, decimate_minmax, load_waveform
 
 from ..campaign_import import load_campaign_module
 from ..rootbridge import RootBridge
+from ..workers import WorkerHandle
 from .root_gallery import RootCanvas, RootGallery
 
 _sg = load_campaign_module(CAMPAIGN_SPARK_GAP, "spark_gap")
@@ -44,6 +46,7 @@ class MetricsPane(QWidget):
         self._events: list[dict[str, Any]] = []
         self._detection: dict[str, Any] = {}
         self._updating = False
+        self._chosen: set[str] | None = None
 
         self._seq = QRadioButton("Sequence")
         self._hist = QRadioButton("Histogram")
@@ -62,7 +65,7 @@ class MetricsPane(QWidget):
         self._typical.toggled.connect(self._redraw)
 
         self._list = QListWidget()
-        self._list.itemChanged.connect(self._redraw)
+        self._list.itemChanged.connect(self._on_metric_toggled)
 
         self._canvas = RootCanvas(bridge, self, empty="Detect events to plot metrics.")
 
@@ -92,7 +95,6 @@ class MetricsPane(QWidget):
     def clear(self) -> None:
         self._events = []
         self._detection = {}
-        self._list.clear()
         self._canvas.clear("Detect events to plot metrics.")
 
     def set_pdf_default(self, path: Path) -> None:
@@ -101,12 +103,7 @@ class MetricsPane(QWidget):
     def set_payload(self, events: list[dict[str, Any]], detection: dict[str, Any]) -> None:
         self._events = list(events)
         self._detection = dict(detection or {})
-        selected = {
-            item.data(Qt.ItemDataRole.UserRole)
-            for item in self._checked_items()
-        }
-        if not selected:
-            selected = set(_fig.DEFAULT_METRICS)
+        selected = set(_fig.DEFAULT_METRICS) if self._chosen is None else set(self._chosen)
         self._updating = True
         self._list.blockSignals(True)
         self._list.clear()
@@ -126,6 +123,31 @@ class MetricsPane(QWidget):
         for row in range(self._list.count()):
             item = self._list.item(row)
             if item is not None and item.checkState() == Qt.CheckState.Checked:
+                items.append(item)
+        return items
+
+    def _on_metric_toggled(self, _item: QListWidgetItem) -> None:
+        if self._updating:
+            return
+        visible = {
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self._list_items()
+        }
+        checked = {
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self._checked_items()
+        }
+        if self._chosen is None:
+            self._chosen = set(checked)
+        else:
+            self._chosen = (self._chosen - visible) | checked
+        self._redraw()
+
+    def _list_items(self) -> list[QListWidgetItem]:
+        items = []
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            if item is not None:
                 items.append(item)
         return items
 
@@ -331,8 +353,35 @@ class OverlayPane(QWidget):
         self._canvas.set_spec(spec, export_spec=export)
 
 
+def _prepare_waveforms(jobs: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Load and decimate full traces. Time starts at the first sample of each record."""
+    prepared: list[dict[str, Any]] = []
+    for path_s, _label in jobs:
+        try:
+            time_s, voltage_v, _meta = load_waveform(Path(path_s))
+            count = min(len(time_s), len(voltage_v))
+            t = time_s[:count]
+            v = voltage_v[:count]
+            if count:
+                t = t - float(t[0])
+            screen_t, screen_v = decimate_minmax(t, v, _fig.WAVEFORM_SCREEN_POINTS)
+            export_t, export_v = decimate_minmax(t, v, DEFAULT_MAX_POINTS)
+            prepared.append(
+                {
+                    "path": path_s,
+                    "screen_t": screen_t.tolist(),
+                    "screen_v": screen_v.tolist(),
+                    "export_t": export_t.tolist(),
+                    "export_v": export_v.tolist(),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — one bad file should not drop the rest
+            prepared.append({"path": path_s, "error": f"{type(exc).__name__}: {exc}"})
+    return prepared
+
+
 class ComposePane(QWidget):
-    """Compare the same metric figure across several saved measurements."""
+    """Compare metric figures or full waveforms across saved measurements."""
 
     refresh_requested = Signal()
 
@@ -342,38 +391,63 @@ class ComposePane(QWidget):
         self._records: list[Any] = []
         self._live: dict[str, Any] | None = None
         self._updating = False
+        self._wave_cache: dict[str, dict[str, Any]] = {}
+        self._wave_worker = WorkerHandle(self)
+        self._wave_epoch = 0
 
         self._meas = QListWidget()
         self._meas.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._meas.itemChanged.connect(self._redraw)
 
-        all_btn = QPushButton("All analyzed")
-        all_btn.clicked.connect(self._select_analyzed)
+        self._all_btn = QPushButton("All analyzed")
+        self._all_btn.clicked.connect(self._select_analyzed)
         none_btn = QPushButton("None")
         none_btn.clicked.connect(self._select_none)
         refresh_btn = QPushButton("Refresh")
-        refresh_btn.clicked.connect(self.refresh_requested.emit)
+        refresh_btn.clicked.connect(self._refresh)
         picks = QHBoxLayout()
-        picks.addWidget(all_btn)
+        picks.addWidget(self._all_btn)
         picks.addWidget(none_btn)
         picks.addWidget(refresh_btn)
 
         self._seq = QRadioButton("Sequence")
         self._hist = QRadioButton("Histogram")
+        self._wave = QRadioButton("Waveform")
         self._hist.setChecked(True)
         mode = QButtonGroup(self)
         mode.addButton(self._seq)
         mode.addButton(self._hist)
-        self._seq.toggled.connect(self._redraw)
+        mode.addButton(self._wave)
+        for button in (self._seq, self._hist, self._wave):
+            button.setAutoExclusive(False)
+        self._hist.toggled.connect(self._on_figure_mode)
+        self._seq.toggled.connect(self._on_figure_mode)
+        self._wave.toggled.connect(self._on_figure_mode)
 
+        self._layout_label = QLabel("Layout")
+        self._overlay_layout = QRadioButton("Overlay")
+        self._stack = QRadioButton("Stacked")
+        self._overlay_layout.setChecked(True)
+        layout_mode = QButtonGroup(self)
+        layout_mode.addButton(self._overlay_layout)
+        layout_mode.addButton(self._stack)
+        self._overlay_layout.setAutoExclusive(False)
+        self._stack.setAutoExclusive(False)
+        self._overlay_layout.toggled.connect(self._on_layout)
+        self._stack.toggled.connect(self._on_layout)
+
+        self._population_label = QLabel("Population")
         self._typical = QRadioButton("Typical")
         self._all = QRadioButton("All events")
         self._typical.setChecked(True)
         population = QButtonGroup(self)
         population.addButton(self._typical)
         population.addButton(self._all)
+        self._typical.setAutoExclusive(False)
+        self._all.setAutoExclusive(False)
         self._typical.toggled.connect(self._redraw)
 
+        self._metrics_label = QLabel("Metrics")
         self._metrics = QListWidget()
         self._metrics.itemChanged.connect(self._redraw)
 
@@ -392,9 +466,14 @@ class ComposePane(QWidget):
         controls.addWidget(QLabel("Figure"))
         controls.addWidget(self._hist)
         controls.addWidget(self._seq)
+        controls.addWidget(self._wave)
+        controls.addWidget(self._layout_label)
+        controls.addWidget(self._overlay_layout)
+        controls.addWidget(self._stack)
+        controls.addWidget(self._population_label)
         controls.addWidget(self._typical)
         controls.addWidget(self._all)
-        controls.addWidget(QLabel("Metrics"))
+        controls.addWidget(self._metrics_label)
         controls.addWidget(self._metrics, stretch=1)
         controls.addWidget(self._note)
 
@@ -407,12 +486,14 @@ class ComposePane(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(side)
         layout.addWidget(self._canvas, stretch=1)
+        self._apply_mode_visibility()
         self._fill_metrics([])
 
     def set_event_loader(self, loader) -> None:
         self._loader = loader
 
     def shutdown(self) -> None:
+        self._wave_worker.cancel()
         self._canvas.shutdown()
 
     def clear(self) -> None:
@@ -436,7 +517,7 @@ class ComposePane(QWidget):
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, stem)
             item.setData(Qt.ItemDataRole.UserRole + 1, str(getattr(record, "path", "")))
-            if payload is None:
+            if payload is None and not self._wave.isChecked():
                 item.setText(f"{label}  (no analysis)")
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 item.setCheckState(Qt.CheckState.Unchecked)
@@ -454,7 +535,72 @@ class ComposePane(QWidget):
             if payload:
                 events.extend(payload.get("events") or [])
         self._fill_metrics(events)
+        self._apply_mode_visibility()
         self._redraw()
+
+    def _apply_mode_visibility(self) -> None:
+        wave = self._wave.isChecked()
+        for widget in (
+            self._population_label,
+            self._typical,
+            self._all,
+            self._metrics_label,
+            self._metrics,
+        ):
+            widget.setEnabled(not wave)
+        for widget in (self._layout_label, self._overlay_layout, self._stack):
+            widget.setEnabled(wave)
+        self._all_btn.setText("All" if wave else "All analyzed")
+
+    def _on_figure_mode(self, checked: bool) -> None:
+        if not checked or self._updating:
+            return
+        if not self._wave.isChecked():
+            self._wave_epoch += 1
+            self._wave_worker.cancel()
+        self._apply_mode_visibility()
+        self._sync_row_flags()
+        self._redraw()
+
+    def _sync_row_flags(self) -> None:
+        """Enable every capture for waveforms, and only analyzed ones otherwise."""
+        wave = self._wave.isChecked()
+        by_stem = {str(getattr(record, "stem", "")): record for record in self._records}
+        self._updating = True
+        self._meas.blockSignals(True)
+        for row in range(self._meas.count()):
+            item = self._meas.item(row)
+            if item is None:
+                continue
+            stem = str(item.data(Qt.ItemDataRole.UserRole) or "")
+            record = by_stem.get(stem)
+            label = str(getattr(record, "run_name", None) or stem) if record is not None else stem
+            payload = self._payload_for(record) if record is not None else None
+            checked = item.checkState() == Qt.CheckState.Checked
+            if payload is None and not wave:
+                item.setText(f"{label}  (no analysis)")
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setCheckState(Qt.CheckState.Unchecked)
+            else:
+                item.setText(label)
+                item.setFlags(
+                    item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+                )
+                item.setCheckState(
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+                )
+        self._meas.blockSignals(False)
+        self._updating = False
+
+    def _on_layout(self, checked: bool) -> None:
+        if not checked or self._updating:
+            return
+        self._redraw()
+
+    def _refresh(self) -> None:
+        self._wave_cache.clear()
+        self._wave_worker.cancel()
+        self.refresh_requested.emit()
 
     def _fill_metrics(self, events: list[dict[str, Any]]) -> None:
         selected = {
@@ -535,6 +681,9 @@ class ComposePane(QWidget):
     def _redraw(self, _checked: bool = False) -> None:
         if self._updating:
             return
+        if self._wave.isChecked():
+            self._redraw_waveforms()
+            return
         names = [item.data(Qt.ItemDataRole.UserRole) for item in self._checked_metric_items()]
         sources = []
         by_stem = {str(getattr(record, "stem", "")): record for record in self._records}
@@ -576,6 +725,99 @@ class ComposePane(QWidget):
             include_first=self._all.isChecked(),
         )
         self._canvas.set_spec(spec)
+
+    def _checked_waveforms(self) -> list[dict[str, str]]:
+        by_stem = {str(getattr(record, "stem", "")): record for record in self._records}
+        rows = []
+        for stem in self._checked_stems():
+            record = by_stem.get(stem)
+            if record is None or getattr(record, "path", None) is None:
+                continue
+            rows.append(
+                {
+                    "path": str(record.path),
+                    "label": str(getattr(record, "run_name", None) or stem),
+                }
+            )
+        return rows
+
+    def _redraw_waveforms(self) -> None:
+        chosen = self._checked_waveforms()
+        if not chosen:
+            self._note.setText("")
+            self._canvas.clear("Select measurements.")
+            return
+        limit = int(_fig.COMPOSE_MAX_PADS)
+        truncated = len(chosen) > limit
+        chosen = chosen[:limit]
+        note = ""
+        if truncated:
+            note = (
+                f"Showing the first {limit} measurements "
+                f"({_fig.COMPOSE_MAX_PADS}-pad limit)."
+            )
+        missing = [row for row in chosen if row["path"] not in self._wave_cache]
+        if missing:
+            loading = "Loading waveforms…"
+            self._note.setText(f"{note} {loading}".strip() if note else loading)
+            if not any(row["path"] in self._wave_cache for row in chosen):
+                self._canvas.clear(loading)
+            epoch = self._wave_epoch
+            self._wave_worker.start(
+                _prepare_waveforms,
+                [(row["path"], row["label"]) for row in missing],
+                on_finished=lambda result, epoch=epoch: self._receive_waveforms(epoch, result),
+                on_failed=lambda message, epoch=epoch: self._fail_waveforms(epoch, message),
+            )
+            return
+        errors: list[str] = []
+        screen: list[dict[str, Any]] = []
+        export: list[dict[str, Any]] = []
+        for row in chosen:
+            cached = self._wave_cache[row["path"]]
+            if cached.get("error"):
+                errors.append(f"{row['label']}: {cached['error']}")
+                continue
+            screen.append(
+                {
+                    "label": row["label"],
+                    "time_s": cached["screen_t"],
+                    "voltage_v": cached["screen_v"],
+                }
+            )
+            export.append(
+                {
+                    "label": row["label"],
+                    "time_s": cached["export_t"],
+                    "voltage_v": cached["export_v"],
+                }
+            )
+        parts = [part for part in (note, "; ".join(errors)) if part]
+        self._note.setText(" ".join(parts))
+        if not screen:
+            self._canvas.clear(errors[0] if errors else "Select measurements.")
+            return
+        layout_name = "stacked" if self._stack.isChecked() else "overlay"
+        self._canvas.set_spec(
+            _fig.compose_waveform_spec(screen, layout=layout_name),
+            export_spec=_fig.compose_waveform_spec(export, layout=layout_name),
+        )
+
+    def _receive_waveforms(self, epoch: int, result: object) -> None:
+        if not isinstance(result, list):
+            return
+        for item in result:
+            if isinstance(item, dict) and item.get("path"):
+                self._wave_cache[str(item["path"])] = item
+        if epoch != self._wave_epoch or not self._wave.isChecked():
+            return
+        self._redraw()
+
+    def _fail_waveforms(self, epoch: int, message: str) -> None:
+        if epoch != self._wave_epoch or not self._wave.isChecked():
+            return
+        self._note.setText("")
+        self._canvas.clear(message)
 
 
 class SparkExplorer(QWidget):

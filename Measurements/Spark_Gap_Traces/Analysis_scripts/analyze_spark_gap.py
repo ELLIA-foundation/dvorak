@@ -19,7 +19,12 @@ else:
 
 from instruments import DEFAULT_OSCILLOSCOPE, open_oscilloscope
 from instruments.registry import list_oscilloscopes
-from lib.paths import CAMPAIGN_SPARK_GAP, campaign_data, campaign_plots, infer_campaign
+from lib.paths import (
+    CAMPAIGN_SPARK_GAP,
+    campaign_data,
+    campaign_session_data,
+    list_sessions,
+)
 from lib.waveform import WaveformCapture, latest_capture, plot_waveform, save_waveform
 from spark_gap import (
     DEFAULT_COARSE_STEP_S,
@@ -121,6 +126,7 @@ def acquire_waveform(
             "write_csv": write_csv,
             "window": window,
             "run_name": run_name,
+            "session": output_dir.name,
         }
         return paths["npz"], run
     except VisaIOError as exc:
@@ -137,8 +143,10 @@ def _resolve_offline_npz(npz_arg: str) -> Path:
         return path
     latest = latest_capture(campaign_data(CAMPAIGN_SPARK_GAP))
     if latest is None or not latest.exists():
+        sessions = ", ".join(list_sessions(CAMPAIGN_SPARK_GAP)) or "(none)"
         raise SystemExit(
-            f"No waveform_*.npz found in {campaign_data(CAMPAIGN_SPARK_GAP)}"
+            f"No waveform_*.npz found under {campaign_data(CAMPAIGN_SPARK_GAP)} "
+            f"(sessions: {sessions})"
         )
     return latest
 
@@ -153,9 +161,10 @@ def main() -> None:
     registered = list_oscilloscopes()
     parser = argparse.ArgumentParser(
         description=(
-            "Download the stopped oscilloscope waveform into Spark_Gap_Traces/Data "
-            "and write the diagnostic figure pack. Configure timebase/trigger on the "
-            "scope first. Pass --npz to skip the instrument and re-analyze a capture."
+            "Download the stopped oscilloscope waveform into "
+            "Spark_Gap_Traces/Data/<session>/ and write the diagnostic figure pack. "
+            "Configure timebase/trigger on the scope first. Pass --npz to skip the "
+            "instrument and re-analyze a capture."
         )
     )
     parser.add_argument(
@@ -166,7 +175,7 @@ def main() -> None:
         metavar="PATH",
         help=(
             "Skip the oscilloscope and analyze an existing NPZ. "
-            "Omit PATH to use the latest capture in this campaign Data/."
+            "Omit PATH to use the latest capture in this campaign's session folders."
         ),
     )
     parser.add_argument(
@@ -196,7 +205,16 @@ def main() -> None:
         "--out-dir",
         type=Path,
         default=None,
-        help="Analysis output directory (default: Data/plots/analysis_<stem>/)",
+        help="Analysis output directory (default: <session>/plots/analysis_<stem>/)",
+    )
+    parser.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        help=(
+            "Session folder under Data/ for a new capture "
+            f"(available: {', '.join(list_sessions(CAMPAIGN_SPARK_GAP)) or 'none yet'})"
+        ),
     )
     parser.add_argument("--no-show", action="store_true", help="Save plots without opening windows")
     parser.add_argument(
@@ -266,8 +284,11 @@ def main() -> None:
         }
         print(f"Offline analysis: {npz_path}")
     else:
-        data_dir = campaign_data(CAMPAIGN_SPARK_GAP)
-        data_dir.mkdir(parents=True, exist_ok=True)
+        if not args.session:
+            raise SystemExit(
+                "Pass --session <name> to write a new capture into Data/<session>/."
+            )
+        data_dir = campaign_session_data(CAMPAIGN_SPARK_GAP, args.session, create=True)
         npz_path, run = acquire_waveform(
             scope_model=args.scope,
             channel=args.scope_channel,
@@ -290,8 +311,7 @@ def main() -> None:
         }
     )
 
-    campaign = infer_campaign(npz_path) or CAMPAIGN_SPARK_GAP
-    plots_dir = campaign_plots(campaign)
+    plots_dir = npz_path.parent / "plots"
     overview_path = plots_dir / f"{npz_path.stem}.png"
     plot_waveform(npz_path, output_path=overview_path, show=False)
     print(f"Wrote {overview_path}")

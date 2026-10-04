@@ -110,7 +110,7 @@ def _draw_panel(pad, panel: dict, *, compact: bool) -> None:
         if _draw_spans(frame, panel.get("vspans") or [], legend):
             _redraw_frame(frame)
         _draw_hlines(frame, panel.get("hlines") or [])
-        _draw_vlines(frame, panel.get("vlines") or [])
+        _draw_vlines(frame, panel.get("vlines") or [], logy=bool(panel.get("logy")))
         _draw_points(panel.get("points") or [])
         hset(
             frame,
@@ -167,26 +167,81 @@ def _draw_hist(spec: dict, legend: list) :
 def _draw_series(series: list, legend: list):
     frame = None
     first = True
-    for index, item in enumerate(series):
-        xs = item.get("x") or []
-        ys = item.get("y") or []
-        count = min(len(xs), len(ys))
-        if count <= 0:
+    bands: list[dict] = []
+    graphs: list[tuple] = []
+    for item in series:
+        if _is_band(item):
+            bands.append(item)
             continue
-        xa = array.array("d", (float(xs[i]) for i in range(count)))
-        ya = array.array("d", (float(ys[i]) for i in range(count)))
-        graph = hold(ROOT.TGraph(count, xa, ya))
-        graph.SetName(next_id("g"))
-        _paint_graph(graph, item)
-        option = _draw_option(item, first=first)
-        graph.Draw(option)
+        graph = _make_graph(item)
+        if graph is None:
+            continue
+        graph.Draw(_draw_option(item, first=first))
         label = str(item.get("label") or "")
         if label:
             legend.append((graph, label, _legend_opt(item)))
+        graphs.append((graph, item))
         if first:
             frame = graph
             first = False
+    for item in bands:
+        band = _draw_band(item, first=frame is None)
+        if band is None:
+            continue
+        label = str(item.get("label") or "")
+        if label:
+            legend.append((band, label, "f"))
+        if frame is None:
+            frame = band
+    # Bands are drawn after the lines, so stroke the lines again on top of the fill.
+    for graph, item in graphs:
+        graph.Draw(_draw_option(item, first=False))
     return frame
+
+
+def _is_band(item: dict) -> bool:
+    return "y_low" in item and "y_high" in item
+
+
+def _make_graph(item: dict):
+    xs = item.get("x") or []
+    ys = item.get("y") or []
+    count = min(len(xs), len(ys))
+    if count <= 0:
+        return None
+    xa = array.array("d", (float(xs[i]) for i in range(count)))
+    ya = array.array("d", (float(ys[i]) for i in range(count)))
+    graph = hold(ROOT.TGraph(count, xa, ya))
+    graph.SetName(next_id("g"))
+    _paint_graph(graph, item)
+    return graph
+
+
+def _draw_band(item: dict, *, first: bool):
+    xs = item.get("x") or []
+    y_lo = item.get("y_low") or []
+    y_hi = item.get("y_high") or []
+    count = min(len(xs), len(y_lo), len(y_hi))
+    if count < 2:
+        return None
+    xa = array.array("d")
+    ya = array.array("d")
+    for index in range(count):
+        xa.append(float(xs[index]))
+        ya.append(float(y_hi[index]))
+    for index in range(count - 1, -1, -1):
+        xa.append(float(xs[index]))
+        ya.append(float(y_lo[index]))
+    graph = hold(ROOT.TGraph(len(xa), xa, ya))
+    graph.SetName(next_id("g"))
+    color = color_of(item.get("color"))
+    alpha = float(item.get("fill_alpha") if item.get("fill_alpha") is not None else 0.45)
+    alpha = min(1.0, max(0.05, alpha))
+    graph.SetFillColorAlpha(color, alpha)
+    graph.SetFillStyle(1001)
+    graph.SetLineColorAlpha(color, 0.0)
+    graph.Draw("AF" if first else "F SAME")
+    return graph
 
 
 def _paint_graph(graph, item: dict) -> None:
@@ -272,20 +327,30 @@ def _draw_hlines(frame, lines: list) -> None:
         _segment(xmin, float(item["y"]), xmax, float(item["y"]), item)
 
 
-def _draw_vlines(frame, lines: list) -> None:
+def _draw_vlines(frame, lines: list, *, logy: bool = False) -> None:
     _x_axis, y_axis = _frame_axes(frame)
     ymin = float(y_axis.GetXmin())
     ymax = float(y_axis.GetXmax())
     for item in lines:
-        line = _segment(float(item["x"]), ymin, float(item["x"]), ymax, item)
+        _segment(float(item["x"]), ymin, float(item["x"]), ymax, item)
         label = str(item.get("label") or "")
         if label:
-            text = hold(ROOT.TLatex(float(item["x"]), ymax, root_text(label)))
+            y = ymax
+            if "label_pos" in item:
+                y = _y_at_fraction(ymin, ymax, float(item["label_pos"]), logy=logy)
+            text = hold(ROOT.TLatex(float(item["x"]), y, root_text(label)))
             text.SetTextAlign(33)
             text.SetTextFont(42)
             text.SetTextSize(0.035)
             text.SetTextColor(color_of(item.get("color")))
             text.Draw()
+
+
+def _y_at_fraction(ymin: float, ymax: float, frac: float, *, logy: bool) -> float:
+    frac = min(1.0, max(0.0, frac))
+    if logy and ymin > 0.0 and ymax > ymin:
+        return ymin * (ymax / ymin) ** frac
+    return ymin + frac * (ymax - ymin)
 
 
 def _segment(x0: float, y0: float, x1: float, y1: float, item: dict):

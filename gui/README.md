@@ -21,9 +21,11 @@ window…** brings the launcher back.
 ## Data
 
 The left pane lists captures under `Measurements/<Campaign>/Data/` (waveforms,
-videos, and CSV / frequency-response tables). Search filters by name, campaign,
-and sidecar metadata. Analyses that only accept waveforms still *show* camera
-clips and tables, but Open / double-click is disabled for those rows.
+videos, and CSV / frequency-response tables). A file in `Data/<session>/` is
+grouped under that session; files still in `Data/` stay directly under the
+campaign. Search filters by name, campaign, session, and sidecar metadata.
+Analyses that only accept waveforms still *show* camera clips and tables, but
+Open / double-click is disabled for those rows.
 
 **Use other folder…** points the catalogue at an external tree with the same
 layout; **Use local** returns to this repo. Right-click a capture to reveal it
@@ -36,37 +38,44 @@ python tools/sync_measurements.py
 ```
 
 That fetches `origin`, commits any GUI analysis artifacts under
-`Data/plots/` (CSV, JSON, METRICS.md, `root_figures.json`), then checks out
-only the raw campaign `Data/` files from `origin/master`. Plot outputs stay
-on this branch; PNG, PDF, MP4, and MOV stay gitignored. Dirty raw captures
-that do not already match the ref still block the run. `--no-commit` skips
-the analysis commit. `--all` also updates `Analysis_scripts` and the rest of
-`Measurements/`, but still leaves `Data/plots/` alone. `--dry-run` prints
-both steps without changing files.
+`Data/plots/` and `Data/<session>/plots/` (CSV, JSON, METRICS.md,
+`root_figures.json`), then checks out only the raw campaign `Data/` files
+from `origin/master`. Plot outputs stay on this branch; PNG, PDF, MP4, and
+MOV stay gitignored. `Measurements/X123_Spectra/` is left alone. Dirty raw
+captures that do not already match the ref still block the run.
+`--no-commit` skips the analysis commit. `--all` also updates
+`Analysis_scripts` and the rest of `Measurements/`, but still leaves those
+`plots/` folders and `X123_Spectra/` alone. `--dry-run` prints both steps
+without changing files.
 
 ## Analyses
 
 **Oscilloscope Trace Analysis** loads the NPZ on a background thread and plots
 it with min-max downsampling. Hover for t / V; **Cursors** for Δt.
 **View → Reset view** restores the full window. **File → Export plot…** writes
-a PNG of the current view (defaults to `Data/plots/`). **Legacy ROOT** and
+a PNG of the current view (defaults to the capture's `plots/` folder, so a
+session capture uses `Data/<session>/plots/`). **Legacy ROOT** and
 **Save PDF…** send that same decimated view to ROOT; the live plot stays in
 Qt so zooming a multi-million-point trace stays responsive.
 
 **Spark Gap Analysis** uses the same plot. **Detect events** marks breakdowns
 (orange typical, red first-cycle). **Run full analysis** writes
-`Data/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08,
-`analysis.pdf`, and `root_figures.json`). Tabs: Overview | Figures | Compose |
+`<capture>/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08,
+`analysis.pdf`, and `root_figures.json`), which is `Data/<session>/plots/`
+when the waveform sits in a session and `Data/plots/` otherwise. Tabs: Overview | Figures | Compose |
 Events | Summary. **Figures** has Metrics (any event scalar as a sequence or
 histogram), Overlay (discharge / ramp / post-collapse for chosen events), and
 Saved figures (the 02–08 pack after a full analysis). **Compose** puts the
 same metric figure for several saved measurements on one canvas (for example
-slew-rate histograms). Detect events is enough to open Metrics and Overlay.
+slew-rate histograms), or the full waveforms overlaid on one axes or stacked
+as one subplot per measurement. Detect events is enough to open Metrics and Overlay.
 **Legacy ROOT** and **Save PDF** apply to the current figure. Without ROOT,
 Saved figures stays on the PNGs.
 
 **Frequency response** plots a sweep (dB ratio and Vpp, log frequency) as a
-ROOT canvas with the same Legacy ROOT button.
+ROOT canvas with the same Legacy ROOT button. Sweeps that include
+`vertical_status` mark below-floor and clipped points, and a `thd` column
+adds a THD (%) panel.
 
 **Video Analysis** plays clips stored under `Measurements/Videos/<campaign>/`
 (MP4 or MOV, directly in the campaign folder). The left pane lists those
@@ -81,14 +90,19 @@ and can show the current-off and current-on frames. Bench captures in
 `Measurements/<campaign>/Data/` still show up in the other analyses'
 catalogue; this window does not use that list.
 
-**X-123 Spectra** lists nested campaigns under
-`Measurements/X123_Spectra/<campaign>/`. Paste Amptek `.mca` files into
-`Data/` (or the campaign folder) and **Refresh**. Energy calibration is
+**X-123 Spectra** lists sessions under
+`Measurements/X123_Spectra/<session>/`. **New session…** creates
+`<session>/Data/` and copies Amptek `.mca` files into it (or drop files
+onto the list). **Refresh** picks up files pasted in by hand. Energy calibration is
 applied on load from `calibration/energy.json`. Shift/Command-click overlays
-spectra from any campaign. The plot has log Y, counts or cps or normalize,
-a moving average (channels or keV), ROI stats, ΔE cursors, U L / common
-line markers, a mean ± std band by phase, and difference vs a reference.
-**File → Export plot…** writes a PNG of the current view.
+spectra from any session. The plot has log Y, counts or cps or normalize,
+a moving average (channels or keV), ROI stats, ΔE cursors, U L, Th/Bi/Ra,
+common line markers, and difference vs a reference. Pin the selection
+as a sum or a mean ± σ (sample standard deviation, or SEM) and overlay
+those groups; **Split by phase** builds one group per pre, post, and
+unlabeled set.
+**File → Export plot…** writes a PNG of the current view. **Legacy ROOT** and
+**Save PDF…** send that same view to ROOT; the live plot stays in Qt.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,

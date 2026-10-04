@@ -15,6 +15,9 @@ repository root on ``sys.path`` before importing this module:
 
 from __future__ import annotations
 
+import re
+import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
 CAMPAIGN_SPARK_GAP = "Spark_Gap_Traces"
@@ -23,8 +26,16 @@ VIDEO_CONTAINER = "Videos"
 SPECTRA_CONTAINER = "X123_Spectra"
 _VIDEO_SKIP_DIRS = {"Analysis_scripts"}
 _SPECTRA_SKIP_DIRS = {"Analysis_scripts", "calibration"}
+_SESSION_SKIP_DIRS = {"plots"}
 VIDEO_EXTENSIONS = {".mp4", ".mov"}
 MCA_EXTENSION = ".mca"
+
+
+def slug_name(value: str | None) -> str:
+    """Filesystem-safe token for session folders and measurement names."""
+    if value is None:
+        return ""
+    return re.sub(r"[^\w\-]+", "_", str(value).strip()).strip("_")
 
 
 def repo_root() -> Path:
@@ -68,6 +79,60 @@ def campaign_data(name: str) -> Path:
 
 def campaign_plots(name: str) -> Path:
     return campaign_data(name) / "plots"
+
+
+def list_sessions(campaign: str) -> list[str]:
+    """Immediate session folders under Measurements/<campaign>/Data/."""
+    root = campaign_data(campaign)
+    if not root.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_dir()
+        and not path.name.startswith(".")
+        and path.name.lower() not in _SESSION_SKIP_DIRS
+    )
+
+
+def campaign_session_data(campaign: str, session: str, *, create: bool = False) -> Path:
+    slug = slug_name(session)
+    if not slug:
+        raise ValueError(f"Invalid session name {session!r}")
+    path = campaign_data(campaign) / slug
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    if not path.is_dir():
+        known = ", ".join(list_sessions(campaign)) or "(none)"
+        raise FileNotFoundError(
+            f"Unknown session {session!r} in {campaign}. Available: {known}"
+        )
+    return path
+
+
+def campaign_session_plots(campaign: str, session: str, *, create: bool = False) -> Path:
+    return campaign_session_data(campaign, session, create=create) / "plots"
+
+
+def infer_session(path: Path) -> str | None:
+    """Return the session folder if ``path`` sits under Measurements/<campaign>/Data/<session>/."""
+    resolved = path.resolve()
+    campaign = infer_campaign(resolved)
+    if campaign is None:
+        return None
+    data = campaign_data(campaign).resolve()
+    try:
+        relative = resolved.relative_to(data)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if not parts or parts[0].lower() in _SESSION_SKIP_DIRS:
+        return None
+    session_dir = data / parts[0]
+    if session_dir.is_dir():
+        return parts[0]
+    return None
 
 
 def campaign_scripts(name: str) -> Path:
@@ -165,6 +230,111 @@ def spectrum_campaign_data(name: str) -> Path:
 
 def spectrum_campaign_plots(name: str) -> Path:
     return spectrum_campaign_data(name) / "plots"
+
+
+def resolve_spectrum_session(name: str) -> str:
+    """Folder name under ``X123_Spectra/`` for a new or existing session.
+
+    An existing campaign is kept as-is (including spaces). A new name is
+    slugified the same way spark-gap session folders are.
+    """
+    raw = (name or "").strip()
+    if not raw or raw.startswith("."):
+        raise ValueError(f"Invalid session name {name!r}")
+    existing = list_spectrum_campaigns()
+    if raw in existing:
+        return raw
+    by_lower = {item.lower(): item for item in existing}
+    if raw.lower() in by_lower:
+        return by_lower[raw.lower()]
+    slug = slug_name(raw)
+    if not slug or slug in _SPECTRA_SKIP_DIRS or slug.startswith("."):
+        raise ValueError(f"Invalid session name {name!r}")
+    matched = by_lower.get(slug.lower())
+    if matched:
+        return matched
+    return slug
+
+
+def ensure_spectrum_session(name: str) -> Path:
+    """Create ``Measurements/X123_Spectra/<session>/Data/`` and return it."""
+    folder = resolve_spectrum_session(name)
+    data = spectra_dir() / folder / "Data"
+    data.mkdir(parents=True, exist_ok=True)
+    return data
+
+
+def collect_mca_files(paths: Iterable[Path]) -> list[Path]:
+    """``.mca`` files from ``paths``, plus ``.mca`` files sitting directly in any directory."""
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for raw in paths:
+        path = Path(raw)
+        if path.is_file() and path.suffix.lower() == MCA_EXTENSION:
+            candidates = [path]
+        elif path.is_dir():
+            candidates = sorted(
+                (
+                    child
+                    for child in path.iterdir()
+                    if child.is_file()
+                    and not child.name.startswith(".")
+                    and child.suffix.lower() == MCA_EXTENSION
+                ),
+                key=lambda child: child.name.lower(),
+            )
+        else:
+            continue
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            found.append(candidate)
+    return found
+
+
+def plan_mca_copy(
+    dest: Path,
+    sources: Iterable[Path],
+) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
+    """Split MCA copies into ``(new, already_named)`` pairs of ``(source, destination)``.
+
+    A source that is already the destination file is omitted.
+    """
+    fresh: list[tuple[Path, Path]] = []
+    collisions: list[tuple[Path, Path]] = []
+    for src in collect_mca_files(sources):
+        target = dest / src.name
+        try:
+            same = target.exists() and target.resolve() == src.resolve()
+        except OSError:
+            same = False
+        if same:
+            continue
+        if target.exists():
+            collisions.append((src, target))
+        else:
+            fresh.append((src, target))
+    return fresh, collisions
+
+
+def copy_mca_pairs(pairs: Iterable[tuple[Path, Path]]) -> tuple[list[Path], list[str]]:
+    """Copy planned pairs. Returns ``(written paths, error messages)``."""
+    written: list[Path] = []
+    errors: list[str] = []
+    for src, target in pairs:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+        except OSError as exc:
+            errors.append(f"{src.name}: {exc}")
+        else:
+            written.append(target)
+    return written, errors
 
 
 def list_spectrum_files(name: str) -> list[Path]:

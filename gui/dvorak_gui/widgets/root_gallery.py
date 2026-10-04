@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -39,11 +40,16 @@ class RootCanvas(QWidget):
         self._gen = 0
         self._render_worker = WorkerHandle(self)
         self._export_worker = WorkerHandle(self)
+        self._queued_spec: tuple[dict | None, dict | None, str | None] | None = None
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(200)
+        self._debounce.timeout.connect(self._commit_spec)
 
         self._view = JsRootView(bridge.jsroot, self)
         self._legacy = QPushButton("Legacy ROOT")
         self._legacy.setToolTip(
-            "Open this figure in the interactive ROOT GUI (root -l)"
+            "Open this figure in the interactive ROOT GUI, including titles and colors edited here"
         )
         self._legacy.clicked.connect(self._open_legacy)
         self._pdf = QPushButton("Save PDF…")
@@ -69,6 +75,7 @@ class RootCanvas(QWidget):
 
     def shutdown(self) -> None:
         self._gen += 1
+        self._debounce.stop()
         self._render_worker.cancel()
         self._export_worker.cancel()
 
@@ -88,6 +95,22 @@ class RootCanvas(QWidget):
         export_spec: dict | None = None,
         message: str | None = None,
     ) -> None:
+        """Show a figure. Rapid calls collapse into one render.
+
+        Checking overlay events one after another used to hide and redraw the
+        web view on every click, which crashes Qt WebEngine on macOS.
+        """
+        self._queued_spec = (spec, export_spec, message)
+        if spec is None:
+            self._debounce.stop()
+            self._commit_spec()
+            return
+        self._debounce.start()
+
+    def _commit_spec(self) -> None:
+        if self._queued_spec is None:
+            return
+        spec, export_spec, message = self._queued_spec
         self._gen += 1
         self._spec = spec
         self._export_spec = export_spec or spec
@@ -103,8 +126,13 @@ class RootCanvas(QWidget):
             )
             self._update_buttons()
             return
+        showing = (
+            self._view.view is not None
+            and self._view.stack.currentWidget() is self._view.view
+        )
         self._status.setText("Drawing…")
-        self._view.show_message("Rendering…")
+        if not showing:
+            self._view.show_message("Rendering…")
         self._update_buttons()
         gen = self._gen
         client = self._bridge.client
@@ -154,6 +182,7 @@ class RootCanvas(QWidget):
             self._bridge,
             self._export_worker,
             spec,
+            view=self._view,
             on_status=self._status.setText,
         )
 
@@ -200,7 +229,7 @@ class RootGallery(QWidget):
 
         self._legacy = QPushButton("Legacy ROOT")
         self._legacy.setToolTip(
-            "Open the selected figure in the interactive ROOT GUI (root -l)"
+            "Open the selected figure in the interactive ROOT GUI, including titles and colors edited here"
         )
         self._legacy.clicked.connect(self._open_legacy)
         self._pdf = QPushButton("Save PDF…")
@@ -369,6 +398,7 @@ class RootGallery(QWidget):
             self._bridge,
             self._export_worker,
             spec,
+            view=self._view if self._js_ready() else None,
             on_status=self._status.setText,
         )
 

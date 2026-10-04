@@ -68,6 +68,7 @@ DEFAULT_METRICS = (
 )
 OVERLAY_SCREEN_POINTS = 8000
 COMPOSE_MAX_PADS = 12
+WAVEFORM_SCREEN_POINTS = 8000
 COMPOSE_DEFAULT_METRICS = (
     "slew_collapse_mean",
     "v_breakdown",
@@ -238,6 +239,112 @@ def compose_figure_spec(
         "cols": cols,
         "width": max(480, 360 * cols),
         "height": max(360, 280 * n_rows + 40),
+        "panels": panels,
+    }
+
+
+def compose_waveform_spec(
+    sources: list[dict[str, Any]],
+    *,
+    layout: str,
+) -> dict[str, Any]:
+    """Full traces on one canvas. Time is already relative to each record start.
+
+    ``layout`` is ``overlay`` (one axes) or ``stacked`` (one subplot per trace).
+    Every panel shares the same time and voltage range.
+    """
+    from lib.waveform import time_scale_factor
+
+    rows: list[tuple[str, np.ndarray, np.ndarray]] = []
+    for src in sources[:COMPOSE_MAX_PADS]:
+        t = np.asarray(src.get("time_s") or [], dtype=float).reshape(-1)
+        v = np.asarray(src.get("voltage_v") or [], dtype=float).reshape(-1)
+        count = min(len(t), len(v))
+        t = t[:count]
+        v = v[:count]
+        mask = np.isfinite(t) & np.isfinite(v)
+        rows.append((str(src.get("label") or "measurement"), t[mask], v[mask]))
+    if not rows:
+        return _single(
+            "compose_waveform",
+            "Compose waveforms",
+            "",
+            {"title": "Select measurements", "series": []},
+        )
+    span = 0.0
+    for _label, t, _v in rows:
+        if len(t):
+            span = max(span, float(np.max(t) - np.min(t)))
+    t_scale, t_unit = time_scale_factor(span)
+    v_scale = 1e-3
+    scaled_x = [t * t_scale for _label, t, _v in rows]
+    scaled_y = [v * v_scale for _label, _t, v in rows]
+    present_x = [x for x in scaled_x if len(x)]
+    present_y = [y for y in scaled_y if len(y)]
+    xmin, xmax = _padded_limits(np.concatenate(present_x) if present_x else np.asarray([]))
+    ymin, ymax = _padded_limits(np.concatenate(present_y) if present_y else np.asarray([]))
+    x_title = f"Time ({t_unit})"
+    y_title = "Voltage (kV)"
+    stacked = layout == "stacked"
+    panels = []
+    if stacked:
+        for index, (label, _t, _v) in enumerate(rows):
+            panels.append(
+                {
+                    "title": label,
+                    "x_title": x_title,
+                    "y_title": y_title,
+                    "xmin": xmin,
+                    "xmax": xmax,
+                    "ymin": ymin,
+                    "ymax": ymax,
+                    "legend": False,
+                    "series": [
+                        _series(
+                            scaled_x[index],
+                            scaled_y[index],
+                            color=_color_index(index),
+                            width=1.5,
+                            label=label,
+                        )
+                    ],
+                }
+            )
+    else:
+        series = [
+            _series(
+                scaled_x[index],
+                scaled_y[index],
+                color=_color_index(index),
+                width=1.5,
+                label=label,
+            )
+            for index, (label, _t, _v) in enumerate(rows)
+        ]
+        panels.append(
+            {
+                "title": "Waveforms",
+                "x_title": x_title,
+                "y_title": y_title,
+                "xmin": xmin,
+                "xmax": xmax,
+                "ymin": ymin,
+                "ymax": ymax,
+                "series": series,
+                "legend_columns": 2,
+                "legend_corner": "right",
+            }
+        )
+    kind = "stacked" if stacked else "overlay"
+    count = max(1, len(panels))
+    return {
+        "name": f"compose_waveform_{kind}",
+        "label": f"Compose waveforms ({kind})",
+        "title": f"Waveforms — {kind}",
+        "footer": "",
+        "cols": 1,
+        "width": 900,
+        "height": max(420, 230 * count + 40) if stacked else 560,
         "panels": panels,
     }
 
@@ -753,6 +860,20 @@ def _decimate_xy(xs: np.ndarray, ys: np.ndarray, max_points: int | None):
             out_t.append(float(sl_t[second]))
             out_v.append(float(sl_v[second]))
     return np.asarray(out_t, dtype=float), np.asarray(out_v, dtype=float)
+
+
+def _padded_limits(values: np.ndarray) -> tuple[float, float]:
+    finite = np.asarray(values, dtype=float).reshape(-1)
+    finite = finite[np.isfinite(finite)]
+    if len(finite) == 0:
+        return 0.0, 1.0
+    lo = float(np.min(finite))
+    hi = float(np.max(finite))
+    if hi <= lo:
+        pad = 1.0 if lo == 0.0 else abs(lo) * 0.05
+        return lo - pad, hi + pad
+    pad = 0.04 * (hi - lo)
+    return lo - pad, hi + pad
 
 
 def _finite(value: Any) -> bool:

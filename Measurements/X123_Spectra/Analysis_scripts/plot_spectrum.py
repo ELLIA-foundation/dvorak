@@ -18,6 +18,7 @@ from lib.paths import (
     spectrum_campaign_plots,
 )
 from lib.spectrum import load_calibration, load_spectrum_file
+from lines import all_lines, label_positions
 from spectrum import moving_average, normalize_integral, normalize_max, to_cps
 
 
@@ -37,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         default="counts",
     )
     parser.add_argument("--log", action="store_true")
-    parser.add_argument("--lines", action="store_true", help="Mark U L and common K/L lines")
+    parser.add_argument(
+        "--lines",
+        action="store_true",
+        help="Mark U L, Th/Bi/Ra, and common K/L lines",
+    )
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--out", type=Path, help="PNG path (default Data/plots/ under first campaign)")
     args = parser.parse_args(argv)
@@ -72,10 +77,22 @@ def main(argv: list[str] | None = None) -> int:
         ax.plot(capture.energy_kev, y, linewidth=1.0, label=label)
 
     if args.lines:
-        ymax = ax.get_ylim()[1]
-        for name, energy in all_lines():
+        marked = all_lines()
+        transform = ax.get_xaxis_transform()
+        for (name, energy), slot in zip(marked, label_positions(marked)):
             ax.axvline(energy, color="0.6", linewidth=0.8, linestyle="--")
-            ax.text(energy, ymax, name, rotation=90, va="top", ha="right", fontsize=8, color="0.35")
+            ax.text(
+                energy,
+                slot,
+                name,
+                rotation=90,
+                va="top",
+                ha="right",
+                fontsize=8,
+                color="0.35",
+                transform=transform,
+                clip_on=True,
+            )
 
     ax.set_xlabel("Energy (keV)")
     ax.set_ylabel(ylabel)

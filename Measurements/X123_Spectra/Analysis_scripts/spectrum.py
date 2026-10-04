@@ -157,18 +157,18 @@ def local_maxima(
     return kept
 
 
-def mean_std(
+def _aligned_stack(
     energy_grids: list[np.ndarray],
     count_grids: list[np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Interpolate onto the first energy axis; return energy, mean, std."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Interpolate every histogram onto the first energy axis."""
     if not energy_grids:
         empty = np.asarray([], dtype=np.float64)
-        return empty, empty, empty
+        return empty, np.zeros((0, 0), dtype=np.float64)
     x0 = np.asarray(energy_grids[0], dtype=np.float64)
-    stacked = []
+    rows: list[np.ndarray] = []
     for energy, counts in zip(energy_grids, count_grids):
-        stacked.append(
+        rows.append(
             np.interp(
                 x0,
                 np.asarray(energy, dtype=np.float64),
@@ -177,5 +177,52 @@ def mean_std(
                 right=0.0,
             )
         )
-    arr = np.vstack(stacked)
-    return x0, np.mean(arr, axis=0), np.std(arr, axis=0, ddof=0)
+    if not rows:
+        return x0, np.zeros((0, x0.size), dtype=np.float64)
+    return x0, np.vstack(rows)
+
+
+def sum_counts(
+    energy_grids: list[np.ndarray],
+    count_grids: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Add counts on the first energy axis. Differing lengths are interpolated."""
+    energy, stacked = _aligned_stack(energy_grids, count_grids)
+    if stacked.size == 0:
+        return energy, np.zeros_like(energy)
+    return energy, np.sum(stacked, axis=0)
+
+
+def mean_std(
+    energy_grids: list[np.ndarray],
+    count_grids: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Interpolate onto the first energy axis; return energy, mean, population std."""
+    energy, stacked = _aligned_stack(energy_grids, count_grids)
+    if stacked.size == 0:
+        return energy, np.zeros_like(energy), np.zeros_like(energy)
+    return energy, np.mean(stacked, axis=0), np.std(stacked, axis=0, ddof=0)
+
+
+def mean_band(
+    energy_grids: list[np.ndarray],
+    count_grids: list[np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return energy, mean, sample standard deviation, and SEM.
+
+    Sample standard deviation uses ``ddof=1``. Both spread arrays are zero
+    when fewer than two spectra are given. SEM is that standard deviation
+    divided by sqrt(n).
+    """
+    energy, stacked = _aligned_stack(energy_grids, count_grids)
+    if stacked.size == 0:
+        zeros = np.zeros_like(energy)
+        return energy, zeros, zeros, zeros
+    mean = np.mean(stacked, axis=0)
+    n = int(stacked.shape[0])
+    if n < 2:
+        zeros = np.zeros_like(mean)
+        return energy, mean, zeros, zeros
+    sample_std = np.std(stacked, axis=0, ddof=1)
+    sem = sample_std / np.sqrt(n)
+    return energy, mean, sample_std, sem

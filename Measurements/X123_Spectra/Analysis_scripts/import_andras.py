@@ -29,7 +29,7 @@ _TABLE = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
 _OFFICE = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
 _TEXT = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
-MCA_CAMPAIGN = "Glass_1800s"
+MCA_CAMPAIGN = "Andras Measurements"
 MATERIAL_CAMPAIGN = "Material_5min"
 N_CHANNELS = 2048
 EXPECTED_PRE = 19509.0
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         pre, post = _ore_column_sums(ore_ods)
         print(
             f"ore ODS {ore_ods.name}: pre sum={pre:.0f} post sum={post:.0f} "
-            "(duplicate of Glass_1800s MCA; skipped)"
+            "(duplicate of Andras Measurements MCA; skipped)"
         )
         if pre and abs(pre - EXPECTED_PRE) > 1:
             print(f"  warning: expected pre integral {EXPECTED_PRE:.0f}")

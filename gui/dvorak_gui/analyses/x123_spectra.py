@@ -22,6 +22,7 @@ from lib.paths import spectra_dir, spectrum_campaign_plots
 from lib.spectrum import SpectrumCapture, load_calibration, load_spectrum_file
 
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
+from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.spectrum_browser import SpectrumBrowser
 from ..widgets.spectrum_plot import SpectrumPlot, SpectrumTrace
 from ..window import AnalysisWindow
@@ -31,7 +32,8 @@ X123_SPECTRA_ID = "x123_spectra"
 
 _SELECT = (
     "Select a spectrum to plot it. "
-    "Shift-click or Command-click overlays traces from any campaign."
+    "Shift-click or Command-click overlays traces from any campaign. "
+    "Pin that selection as a sum or a mean ± σ to compare groups."
 )
 
 
@@ -53,6 +55,7 @@ def _load_files(paths: list[str], campaigns: list[str]) -> dict[str, Any]:
 class X123SpectraWindow(AnalysisWindow):
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._worker = WorkerHandle()
+        self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._captures: dict[Path, SpectrumCapture] = {}
         super().__init__(spec, controller)
@@ -63,16 +66,28 @@ class X123SpectraWindow(AnalysisWindow):
         super()._build_menu()
         file_menu = self.menuBar().actions()[0].menu()
         assert file_menu is not None
+        refresh_act = None
         for action in file_menu.actions():
             if action.text() == "Refresh catalogue":
                 action.setText("Refresh spectra")
+                refresh_act = action
+        new_act = QAction("New session…", self)
+        new_act.triggered.connect(self._new_session)
+        if refresh_act is not None:
+            file_menu.insertAction(refresh_act, new_act)
         close_act = next(
             action for action in file_menu.actions() if action.text() == "Close"
         )
         export_act = QAction("Export plot…", self)
         export_act.setShortcut(QKeySequence.StandardKey.Save)
         export_act.triggered.connect(self._export_plot)
+        legacy_act = QAction("Legacy ROOT", self)
+        legacy_act.triggered.connect(self._open_legacy_root)
+        pdf_act = QAction("Export PDF…", self)
+        pdf_act.triggered.connect(self._export_pdf)
         file_menu.insertAction(close_act, export_act)
+        file_menu.insertAction(close_act, pdf_act)
+        file_menu.insertAction(close_act, legacy_act)
 
         view_menu = self.menuBar().addMenu("&View")
         reset_act = QAction("Reset view", self)
@@ -83,13 +98,19 @@ class X123SpectraWindow(AnalysisWindow):
     def _reset_view(self) -> None:
         self._plot.reset_view()
 
+    def _new_session(self) -> None:
+        self._browser.new_session()
+
     def _build_body(self) -> None:
         self._browser = SpectrumBrowser()
         self._browser.current_file_changed.connect(self._on_current)
         self._browser.selection_changed.connect(self._on_selection)
+        self._browser.status_message.connect(self.statusBar().showMessage)
 
         self._plot = SpectrumPlot()
         self._plot.status_changed.connect(self.statusBar().showMessage)
+        self._plot.legacy_root_requested.connect(self._open_legacy_root)
+        self._plot.pdf_requested.connect(self._export_pdf)
 
         heading = QLabel("Capture")
         self._detail = QPlainTextEdit()
@@ -144,9 +165,10 @@ class X123SpectraWindow(AnalysisWindow):
             return
         root = spectra_dir()
         self._plot.show_message(
-            "No X-123 campaigns yet.\n\n"
-            f"Create {root}/<campaign>/Data/ and paste .mca files, "
-            "then choose File → Refresh spectra."
+            "No X-123 sessions yet.\n\n"
+            "Choose File → New session… (or New session… in the list) "
+            f"to create {root}/<session>/Data/ and copy .mca files in. "
+            "You can also drop .mca files onto the list."
         )
         self._detail.clear()
         self.statusBar().showMessage("No spectrum campaigns")
@@ -221,17 +243,56 @@ class X123SpectraWindow(AnalysisWindow):
         payload["path"] = str(path)
         self._detail.setPlainText(json.dumps(payload, indent=2, default=str))
 
-    def _export_plot(self) -> None:
+    def _publication_spec(self) -> dict | None:
         paths = self._files_to_plot()
-        if not paths:
+        name = paths[0].stem if paths else "spectrum"
+        return self._plot.publication_spec(name)
+
+    def _open_legacy_root(self) -> None:
+        spec = self._publication_spec()
+        if spec is None:
             QMessageBox.information(self, self.windowTitle(), "Select a spectrum first.")
             return
+        open_in_legacy_root(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            on_status=self.statusBar().showMessage,
+        )
+
+    def _export_pdf(self) -> None:
+        spec = self._publication_spec()
+        default = self._default_export_path(".pdf")
+        if spec is None or default is None:
+            QMessageBox.information(self, self.windowTitle(), "Select a spectrum first.")
+            return
+        save_pdf(
+            self,
+            self._controller.root,
+            self._export_worker,
+            spec,
+            default,
+            on_status=self.statusBar().showMessage,
+        )
+
+    def _default_export_path(self, suffix: str) -> Path | None:
+        paths = self._files_to_plot()
+        if not paths:
+            return None
         campaign = self._browser.campaign_for(paths[0])
         if campaign:
             default_dir = spectrum_campaign_plots(campaign)
         else:
             default_dir = paths[0].parent / "plots"
-        default = default_dir / f"{paths[0].stem}.png"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        return default_dir / f"{paths[0].stem}{suffix}"
+
+    def _export_plot(self) -> None:
+        default = self._default_export_path(".png")
+        if default is None:
+            QMessageBox.information(self, self.windowTitle(), "Select a spectrum first.")
+            return
         chosen, _filter = QFileDialog.getSaveFileName(
             self,
             "Export plot",
@@ -251,6 +312,7 @@ class X123SpectraWindow(AnalysisWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._load_gen += 1
         self._worker.cancel()
+        self._export_worker.cancel()
         super().closeEvent(event)
 
 
@@ -263,9 +325,10 @@ register(
         id=X123_SPECTRA_ID,
         title="X-123 Spectra",
         description=(
-            "Plot Amptek X-123 energy spectra from nested campaigns. "
-            "Paste .mca files into Measurements/X123_Spectra/<campaign>/Data/ "
-            "and Refresh. Overlay traces, smooth them, and mark U L lines."
+            "Plot Amptek X-123 energy spectra. New session… creates "
+            "Measurements/X123_Spectra/<session>/Data/ and copies .mca files "
+            "into it. Overlay traces, pin sums and means, smooth them, "
+            "mark U, Th, Bi, and Ra lines, and open the view in ROOT."
         ),
         family=FAMILY_ANALYSIS,
         window_factory=_create_window,
