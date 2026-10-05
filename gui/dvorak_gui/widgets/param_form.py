@@ -86,8 +86,9 @@ class ParamForm(QWidget):
             return widget
         if option.type == "choice":
             widget = QComboBox()
-            for choice in option.choices:
-                widget.addItem(choice, choice)
+            labels = option.choice_labels or option.choices
+            for choice, label in zip(option.choices, labels):
+                widget.addItem(label, choice)
             if option.default is not None:
                 index = widget.findData(option.default)
                 if index < 0:

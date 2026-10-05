@@ -53,6 +53,7 @@ class CaptureBrowser(QWidget):
 
     capture_selected = Signal(object)
     capture_chosen = Signal(object)
+    selection_changed = Signal()
 
     def __init__(
         self,
@@ -64,9 +65,20 @@ class CaptureBrowser(QWidget):
         self._controller = controller
         self._accepted_kinds = accepted_kinds
         self._records: list[CaptureRecord] = []
+        self._extended = False
         self._build()
         controller.data_root_changed.connect(self.refresh)
         self.refresh()
+
+    def enable_extended_selection(self) -> None:
+        """Shift-click and Command-click add captures. Other analyses stay single-select."""
+        if self._extended:
+            return
+        self._extended = True
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._update_count_label()
 
     def current_record(self) -> CaptureRecord | None:
         item = self._tree.currentItem()
@@ -74,6 +86,16 @@ class CaptureBrowser(QWidget):
             return None
         record = item.data(0, RECORD_ROLE)
         return record if isinstance(record, CaptureRecord) else None
+
+    def selected_records(self) -> list[CaptureRecord]:
+        """Capture rows in tree order. Campaign and session headers are omitted."""
+        records: list[CaptureRecord] = []
+        seen: set[Path] = set()
+        for index in range(self._tree.topLevelItemCount()):
+            parent = self._tree.topLevelItem(index)
+            if parent is not None:
+                self._collect_selected(parent, records, seen)
+        return records
 
     def refresh(self) -> None:
         query = self._search.text()
@@ -154,7 +176,12 @@ class CaptureBrowser(QWidget):
         ]
         total = len(visible)
         suffix = ", ".join(parts) if parts else "no captures"
-        self._count_label.setText(f"{total} shown · {suffix}")
+        text = f"{total} shown · {suffix}"
+        if self._extended:
+            selected = len(self.selected_records())
+            if selected:
+                text += f" · {selected} selected"
+        self._count_label.setText(text)
 
     def _visible_records(self) -> list[CaptureRecord]:
         records: list[CaptureRecord] = []
@@ -178,48 +205,96 @@ class CaptureBrowser(QWidget):
                 records.extend(self._records_under(child))
         return records
 
+    def _collect_selected(
+        self,
+        item: QTreeWidgetItem,
+        records: list[CaptureRecord],
+        seen: set[Path],
+    ) -> None:
+        record = item.data(0, RECORD_ROLE)
+        if isinstance(record, CaptureRecord) and item.isSelected():
+            key = record.path.resolve()
+            if key not in seen:
+                seen.add(key)
+                records.append(record)
+        for row in range(item.childCount()):
+            child = item.child(row)
+            if child is not None:
+                self._collect_selected(child, records, seen)
+
+    def _sync_open_button(self) -> None:
+        item = self._tree.currentItem()
+        record = item.data(0, RECORD_ROLE) if item is not None else None
+        self._open_btn.setEnabled(
+            isinstance(record, CaptureRecord) and bool(item.data(0, ACCEPTED_ROLE))
+        )
+
+    def _on_selection_changed(self) -> None:
+        self._update_count_label()
+        self.selection_changed.emit()
+
     def _rebuild_tree(self, query: str) -> None:
         current = self.current_record()
-        self._tree.clear()
-        by_campaign: dict[str, dict[str, list[CaptureRecord]]] = {}
-        for record in self._records:
-            session = record.session or ""
-            by_campaign.setdefault(record.campaign, {}).setdefault(session, []).append(record)
-
+        selected_paths = (
+            {record.path.resolve() for record in self.selected_records()}
+            if self._extended
+            else set()
+        )
+        if self._extended:
+            self._tree.blockSignals(True)
         select_item: QTreeWidgetItem | None = None
-        for campaign, sessions in by_campaign.items():
-            parent = QTreeWidgetItem([campaign, "", "", "", "", "", ""])
-            font = parent.font(0)
-            font.setBold(True)
-            parent.setFont(0, font)
-            self._tree.addTopLevelItem(parent)
-            parent.setFirstColumnSpanned(True)
-            for session in sorted(sessions, key=lambda name: name.lower()):
-                session_records = sorted(
-                    sessions[session],
-                    key=lambda rec: rec.captured_at or "",
-                    reverse=True,
-                )
-                if session:
-                    group = QTreeWidgetItem([session, "", "", "", "", "", ""])
-                    parent.addChild(group)
-                    group.setFirstColumnSpanned(True)
-                else:
-                    group = parent
-                for record in session_records:
-                    child = self._make_item(record)
-                    group.addChild(child)
-                    if current is not None and record.path == current.path:
-                        select_item = child
-                if session:
-                    group.setExpanded(True)
-            parent.setExpanded(True)
+        reselect: list[QTreeWidgetItem] = []
+        try:
+            self._tree.clear()
+            by_campaign: dict[str, dict[str, list[CaptureRecord]]] = {}
+            for record in self._records:
+                session = record.session or ""
+                by_campaign.setdefault(record.campaign, {}).setdefault(session, []).append(record)
 
-        self._apply_filter(query)
-        for column in range(len(_COLUMNS)):
-            self._tree.resizeColumnToContents(column)
-        if select_item is not None:
-            self._tree.setCurrentItem(select_item)
+            for campaign, sessions in by_campaign.items():
+                parent = QTreeWidgetItem([campaign, "", "", "", "", "", ""])
+                font = parent.font(0)
+                font.setBold(True)
+                parent.setFont(0, font)
+                self._tree.addTopLevelItem(parent)
+                parent.setFirstColumnSpanned(True)
+                for session in sorted(sessions, key=lambda name: name.lower()):
+                    session_records = sorted(
+                        sessions[session],
+                        key=lambda rec: rec.captured_at or "",
+                        reverse=True,
+                    )
+                    if session:
+                        group = QTreeWidgetItem([session, "", "", "", "", "", ""])
+                        parent.addChild(group)
+                        group.setFirstColumnSpanned(True)
+                    else:
+                        group = parent
+                    for record in session_records:
+                        child = self._make_item(record)
+                        group.addChild(child)
+                        if current is not None and record.path == current.path:
+                            select_item = child
+                        if record.path.resolve() in selected_paths:
+                            reselect.append(child)
+                    if session:
+                        group.setExpanded(True)
+                parent.setExpanded(True)
+
+            self._apply_filter(query)
+            for column in range(len(_COLUMNS)):
+                self._tree.resizeColumnToContents(column)
+            if select_item is not None:
+                self._tree.setCurrentItem(select_item)
+            for item in reselect:
+                item.setSelected(True)
+        finally:
+            if self._extended:
+                self._tree.blockSignals(False)
+        if self._extended:
+            self._sync_open_button()
+            self._update_count_label()
+            self.selection_changed.emit()
 
     def _make_item(self, record: CaptureRecord) -> QTreeWidgetItem:
         accepted = self._is_accepted(record)

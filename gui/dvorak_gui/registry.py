@@ -28,6 +28,8 @@ class Option:
     unit: str = ""
     choices: tuple[str, ...] = ()
     optional: bool = False
+    # Shown in the combo box in place of ``choices``; values stay ``choices``.
+    choice_labels: tuple[str, ...] = ()
 
 
 @dataclass

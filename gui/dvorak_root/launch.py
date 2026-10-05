@@ -179,6 +179,7 @@ class RootClient:
         self._stderr: deque[str] = deque(maxlen=40)
         self._pending = b""
         self._ids = 0
+        self._closed = False
 
     @property
     def available(self) -> bool:
@@ -222,7 +223,10 @@ class RootClient:
         directory: str | None = None,
         size: tuple[int, int] | None = None,
         timeout: float = 60,
+        wanted=None,
     ) -> dict:
+        """Render ``spec``. ``wanted()`` returning False once this request reaches
+        the renderer skips it and returns ``{"skipped": True}``."""
         request: dict = {"op": "render", "spec": spec, "outputs": list(outputs)}
         if pdf_path:
             request["pdf_path"] = pdf_path
@@ -232,7 +236,7 @@ class RootClient:
             request["dir"] = directory
         if size:
             request["size"] = [int(size[0]), int(size[1])]
-        return self._request(request, timeout)
+        return self._request(request, timeout, wanted)
 
     def legacy(
         self,
@@ -264,12 +268,18 @@ class RootClient:
             request["size"] = [int(size[0]), int(size[1])]
         return self._request(request, timeout)
 
-    def _request(self, request: dict, timeout: float) -> dict:
+    def _request(self, request: dict, timeout: float, wanted=None) -> dict:
         self.wait()
         if not self.available:
             error = (self.report or {}).get("error") or "ROOT is not available."
             raise RuntimeError(error)
         with self._lock:
+            if self._closed:
+                raise RuntimeError("ROOT renderer is shut down.")
+            # Requests queue on this lock. One superseded while it waited
+            # (the pane resized, the selection changed) is not worth drawing.
+            if wanted is not None and not wanted():
+                return {"ok": True, "skipped": True}
             if self._ids and self._ids % 25 == 0:
                 self._recycle()
             self._ensure()
@@ -286,7 +296,9 @@ class RootClient:
         return reply
 
     def close(self) -> None:
+        """Stop the renderer. Requests made afterwards fail instead of restarting it."""
         with self._lock:
+            self._closed = True
             proc = self._proc
             self._proc = None
             if proc is None or proc.poll() is not None:

@@ -59,7 +59,11 @@ session capture uses `Data/<session>/plots/`). **Legacy ROOT** and
 Qt so zooming a multi-million-point trace stays responsive.
 
 **Spark Gap Analysis** uses the same plot. **Detect events** marks breakdowns
-(orange typical, red first-cycle). **Run full analysis** writes
+(orange typical, red first-cycle). **Breakdown polarity** picks Positive (a
+gap collapsing down from V > 0, the default), Negative (collapsing up from
+V < 0), or Both; see `SPARK_GAP_METRICS.md`. A capture sampled more coarsely
+than the drop window (e.g. 5 µs) cannot resolve a collapse, and the count
+under the buttons says so. **Run full analysis** writes
 `<capture>/plots/analysis_<stem>/` (CSV, JSON, METRICS.md, figures 01–08,
 `analysis.pdf`, and `root_figures.json`), which is `Data/<session>/plots/`
 when the waveform sits in a session and `Data/plots/` otherwise. Tabs: Overview | Figures | Compose |
@@ -70,7 +74,10 @@ saved measurements on one canvas. Histograms and sequences can be overlaid
 on one axes or stacked as subplots; full waveforms use the same choice.
 A stack of one metric takes a column count, so four histograms and 2 columns
 is a 2×2 grid. Sequence overlays use each event's breakdown time.
-Detect events is enough to open Metrics and Overlay.
+Shift-click or Command-click pools the selected captures' saved events into
+the Metrics histograms (the opened capture's live detection counts too), and
+Compose → Sets pins each such selection as one pooled histogram. Detect
+events is enough to open Metrics and Overlay.
 **Legacy ROOT** and **Save PDF** apply to the current figure. Without ROOT,
 Saved figures stays on the PNGs.
 
@@ -88,6 +95,11 @@ macro written by ROOT's `SaveAs(".C")` into a temporary `dvorak-legacy-*`
 folder, so it can be edited and run again. **Save PDF** writes the same view.
 ROOT starts with `ROOTSYS` set to the installation Dvorak found, so a
 `.rootrc` that lists `$ROOTSYS/lib` keeps working.
+
+Saved figures draws a screen copy of the 02–08 pack, with long traces
+min-max decimated so every peak survives; `analysis.pdf` from Run full
+analysis keeps full resolution. A panel with more than 16 labelled series
+drops its legend rather than covering the data.
 
 Labels reach ROOT as ASCII TLatex (`#mu`, `^{2}`, `#Delta`, `#ddot{a}`).
 Interactive ROOT on macOS reads strings byte by byte, so raw UTF-8 such as

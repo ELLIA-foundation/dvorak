@@ -48,6 +48,9 @@ _HIST_ALPHA_SINGLE = 0.45
 _HIST_ALPHA_OVERLAY = 0.30
 _LEGEND_FILL_ALPHA = 0.85
 
+# Past this many labelled series a legend hides the data and cannot be read.
+_MAX_LEGEND_ENTRIES = 16
+
 _MEAN_COLOR = "#d62728"
 _MEDIAN_COLOR = "#2ca02c"
 _KEY_COLOR = "#444444"
@@ -281,6 +284,12 @@ def _draw_panel(pad, panel: dict, pad_w: float, pad_h: float) -> None:
     spans = _make_spans(panel.get("vspans") or [])
     content.legend[:0] = [(box, label, "f") for box, label, _x in spans if label]
     show_legend = bool(panel.get("legend", True)) and bool(content.legend)
+    notes_in = list(panel.get("notes") or [])
+    if show_legend and len(content.legend) > _MAX_LEGEND_ENTRIES:
+        show_legend = False
+        notes_in.append(
+            {"align": "right", "text": f"{len(content.legend)} labelled series; legend omitted"}
+        )
     legend_box = None
     if show_legend:
         legend_box = _legend_box(
@@ -293,7 +302,7 @@ def _draw_panel(pad, panel: dict, pad_w: float, pad_h: float) -> None:
             pad_h=pad_h,
         )
     notes = _note_layout(
-        panel.get("notes") or [],
+        notes_in,
         margins=margins,
         sizes=sizes,
         pad_w=pad_w,

@@ -15,6 +15,10 @@ DEFAULT_DROP_WINDOW_S = 100e-9
 DEFAULT_MERGE_GAP_S = 5e-6
 DEFAULT_COARSE_STEP_S = 50e-9
 DEFAULT_SCOPE_BW_HZ = 100e6
+# Which breakdowns to detect. A positively charged gap collapses downward from
+# V > 0; a negatively charged one collapses upward from V < 0.
+POLARITIES = ("positive", "negative", "both")
+DEFAULT_POLARITY = "positive"
 
 REFINE_WINDOW_S = 2e-6
 STEEP_WINDOW_S = 20e-9
@@ -31,6 +35,11 @@ COLLAPSE_SNIPPET_POST_S = 160e-9
 POST_SNIPPET_S = 400e-9
 RAMP_FIT_MAX_POINTS = 25_000
 FIRST_CYCLE_RATE_FRACTION = 0.35
+# With both polarities, a collapse of the opposite sign right after a
+# breakdown is usually its ringing. A real one follows a charged gap: the
+# trace sits on its side of zero for this long before the plateau.
+PRECHARGE_S = 1e-6
+PRECHARGE_FRACTION = 0.5
 
 EVENT_FIELDS: dict[str, dict[str, str]] = {
     "event_index": {
@@ -55,7 +64,8 @@ EVENT_FIELDS: dict[str, dict[str, str]] = {
         "unit": "V",
         "definition": (
             "Median voltage over the ~20-50 ns plateau immediately before t_break. "
-            "Repetitive breakdown voltage for that shot."
+            "Repetitive breakdown voltage for that shot. Negative for a "
+            "negative-polarity breakdown (an upward collapse from V < 0)."
         ),
     },
     "v_undershoot": {
@@ -399,6 +409,7 @@ class SparkGapEvent:
     L_est_h: float | None = None
     t_break_index: int = 0
     t10_index: int = 0
+    polarity: int = 1
     ramp_start_index: int | None = None
     ramp_stop_index: int | None = None
     collapse_t_s: np.ndarray = field(default_factory=lambda: np.asarray([]), repr=False)
@@ -589,18 +600,25 @@ def _estimate_recovery(
     t_break_index: int,
     charge_rate: float | None,
     dt: float,
+    polarity: int = 1,
 ) -> float | None:
+    """Time until the trace recharges at the next ramp's rate.
+
+    ``polarity`` -1 mirrors the trace, so a negative ramp is matched the same
+    way as a positive one.
+    """
     start = t_break_index + _as_index(500e-9, dt)
     win = _as_index(1e-6, dt)
     step = _as_index(50e-9, dt)
     if start + win >= len(voltage_v):
         return None
+    rate = None if charge_rate is None else polarity * charge_rate
     for i in range(start, len(voltage_v) - win, step):
-        slope = (voltage_v[i + win] - voltage_v[i]) / (time_s[i + win] - time_s[i])
-        if charge_rate is None or abs(charge_rate) < 1.0:
+        slope = polarity * (voltage_v[i + win] - voltage_v[i]) / (time_s[i + win] - time_s[i])
+        if rate is None or abs(rate) < 1.0:
             if slope > 0:
                 return float(time_s[i] - time_s[t_break_index])
-        elif 0.4 * charge_rate <= slope <= 2.5 * charge_rate:
+        elif 0.4 * rate <= slope <= 2.5 * rate:
             return float(time_s[i] - time_s[t_break_index])
     return None
 
@@ -612,14 +630,22 @@ def _fill_recovery(
     dt: float,
 ) -> None:
     for i, event in enumerate(events):
-        next_rate = events[i + 1].charge_rate if i + 1 < len(events) else event.charge_rate
-        event.recovery_s = _estimate_recovery(time_s, voltage_v, event.t_break_index, next_rate, dt)
+        following = events[i + 1] if i + 1 < len(events) else event
+        event.recovery_s = _estimate_recovery(
+            time_s,
+            voltage_v,
+            event.t_break_index,
+            following.charge_rate,
+            dt,
+            following.polarity,
+        )
 
 
 def _flag_first_cycles(events: list[SparkGapEvent]) -> None:
     for event in events:
         event.first_cycle = False
-    rates = [e.charge_rate for e in events if _finite(e.charge_rate)]
+    # A slow ramp is slow whatever its sign: compare rates in each event's own frame.
+    rates = [e.polarity * e.charge_rate for e in events if _finite(e.charge_rate)]
     if len(rates) < 3:
         if events:
             events[0].first_cycle = True
@@ -628,7 +654,8 @@ def _flag_first_cycles(events: list[SparkGapEvent]) -> None:
     high = arr[arr >= np.percentile(arr, 25)]
     ref = float(np.median(high)) if len(high) else float(np.median(arr))
     for event in events:
-        if _finite(event.charge_rate) and event.charge_rate < FIRST_CYCLE_RATE_FRACTION * ref:
+        rate = event.charge_rate
+        if _finite(rate) and event.polarity * rate < FIRST_CYCLE_RATE_FRACTION * ref:
             event.first_cycle = True
     if events and all(event.first_cycle for event in events):
         for event in events:
@@ -699,6 +726,86 @@ def _dedupe_events(events: list[SparkGapEvent], merge_gap_s: float) -> list[Spar
     return kept
 
 
+def normalize_polarity(value: str | None) -> str:
+    text = str(value or DEFAULT_POLARITY).strip().lower()
+    if text not in POLARITIES:
+        raise ValueError(f"polarity must be one of {', '.join(POLARITIES)}, not {value!r}")
+    return text
+
+
+def _mirror(event: SparkGapEvent) -> None:
+    """Turn an event found on the inverted trace back into measured volts.
+
+    Levels change sign. Magnitudes (dv_collapse, slew rates) stay positive.
+    """
+    event.polarity = -1
+    for name in ("v_breakdown", "v_undershoot", "v_residual", "v10", "v90"):
+        setattr(event, name, -getattr(event, name))
+    event.collapse_v = -event.collapse_v
+    event.post_v = -event.post_v
+
+
+def _detect_polarity(
+    time_s: np.ndarray,
+    voltage_v: np.ndarray,
+    sign: int,
+    dt: float,
+    *,
+    drop_threshold_v: float,
+    drop_window_s: float,
+    merge_gap_s: float,
+    coarse_step_s: float,
+) -> list[SparkGapEvent]:
+    """Breakdowns of one polarity. A negative breakdown is a drop on -V.
+
+    A collapse whose plateau sits on the other side of zero is not a
+    breakdown of this polarity (ringing, or the recharge swing of the
+    opposite one), so it is dropped here.
+    """
+    frame = voltage_v if sign > 0 else -voltage_v
+    seeds = detect_coarse_events(
+        time_s,
+        frame,
+        drop_threshold_v=drop_threshold_v,
+        drop_window_s=drop_window_s,
+        merge_gap_s=merge_gap_s,
+        coarse_step_s=coarse_step_s,
+    )
+    events: list[SparkGapEvent] = []
+    for seed in seeds:
+        event = _refine_one(time_s, frame, seed, dt, 0)
+        if not event.v_breakdown > 0.0:
+            continue
+        if sign < 0:
+            _mirror(event)
+        events.append(event)
+    return events
+
+
+def _precharged(voltage_v: np.ndarray, event: SparkGapEvent, dt: float) -> bool:
+    """True when the gap held this event's polarity before it collapsed."""
+    end = max(0, event.t_break_index - _as_index(PLATEAU_PRE_S, dt))
+    start = max(0, end - _as_index(PRECHARGE_S, dt))
+    window = voltage_v[start:end] if end > start else voltage_v[max(0, end - 1) : end + 1]
+    if len(window) == 0:
+        return True
+    held = event.polarity * float(np.median(window))
+    return held >= PRECHARGE_FRACTION * abs(event.v_breakdown)
+
+
+def _drop_opposite_ringing(
+    voltage_v: np.ndarray, events: list[SparkGapEvent], dt: float
+) -> list[SparkGapEvent]:
+    kept: list[SparkGapEvent] = []
+    for event in events:
+        if kept and event.polarity != kept[-1].polarity and not _precharged(voltage_v, event, dt):
+            continue
+        kept.append(event)
+    for index, event in enumerate(kept):
+        event.event_index = index
+    return kept
+
+
 def analyze_waveform(
     time_s: np.ndarray,
     voltage_v: np.ndarray,
@@ -709,8 +816,14 @@ def analyze_waveform(
     coarse_step_s: float = DEFAULT_COARSE_STEP_S,
     scope_bw_hz: float = DEFAULT_SCOPE_BW_HZ,
     capacitance_f: float | None = None,
+    polarity: str = DEFAULT_POLARITY,
 ) -> AnalysisResult:
-    """Detect breakdowns and compute the documented spark-gap features."""
+    """Detect breakdowns and compute the documented spark-gap features.
+
+    ``polarity`` is ``positive`` (downward collapses from V > 0), ``negative``
+    (upward collapses from V < 0), or ``both``.
+    """
+    polarity = normalize_polarity(polarity)
     time_s = np.asarray(time_s, dtype=np.float64)
     voltage_v = np.asarray(voltage_v, dtype=np.float64)
     metadata = dict(metadata or {})
@@ -718,16 +831,31 @@ def analyze_waveform(
     lsb_v = float(metadata.get("y_increment_v") or 0.0)
     sample_rate = float(metadata.get("sample_rate_hz") or (1.0 / dt if dt else 0.0))
 
-    seeds = detect_coarse_events(
-        time_s,
-        voltage_v,
-        drop_threshold_v=drop_threshold_v,
-        drop_window_s=drop_window_s,
-        merge_gap_s=merge_gap_s,
-        coarse_step_s=coarse_step_s,
-    )
-    events = [_refine_one(time_s, voltage_v, seed, dt, i) for i, seed in enumerate(seeds)]
+    # Negative mode also finds the positive breakdowns, only so their ringing
+    # is not mistaken for negative ones; they are dropped again below.
+    signs = {"positive": (1,), "negative": (1, -1), "both": (1, -1)}[polarity]
+    events: list[SparkGapEvent] = []
+    for sign in signs:
+        events.extend(
+            _detect_polarity(
+                time_s,
+                voltage_v,
+                sign,
+                dt,
+                drop_threshold_v=drop_threshold_v,
+                drop_window_s=drop_window_s,
+                merge_gap_s=merge_gap_s,
+                coarse_step_s=coarse_step_s,
+            )
+        )
+    events.sort(key=lambda event: event.t_break)
     events = _dedupe_events(events, merge_gap_s)
+    if len(signs) > 1:
+        events = _drop_opposite_ringing(voltage_v, events, dt)
+    if polarity == "negative":
+        events = [event for event in events if event.polarity < 0]
+        for index, event in enumerate(events):
+            event.event_index = index
     _fill_periods(events)
     _fill_ramps(time_s, voltage_v, events, dt)
     _fill_recovery(time_s, voltage_v, events, dt)
@@ -736,6 +864,9 @@ def analyze_waveform(
 
     typical = [event for event in events if not event.first_cycle]
     detection = {
+        "polarity": polarity,
+        "n_positive": sum(1 for event in events if event.polarity > 0),
+        "n_negative": sum(1 for event in events if event.polarity < 0),
         "drop_threshold_v": drop_threshold_v,
         "drop_window_s": drop_window_s,
         "merge_gap_s": merge_gap_s,

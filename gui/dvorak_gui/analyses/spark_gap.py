@@ -64,6 +64,20 @@ OPTIONS = (
         help="Minimum voltage drop in the coarse window to flag a breakdown.",
     ),
     Option(
+        "polarity",
+        "choice",
+        "Breakdown polarity",
+        _sg.DEFAULT_POLARITY,
+        choices=_sg.POLARITIES,
+        choice_labels=("Positive", "Negative", "Both"),
+        help=(
+            "Positive: a charged gap collapsing down from V > 0. "
+            "Negative: collapsing up from V < 0. Both: either; a polarity "
+            "change right after a breakdown counts only if the gap held "
+            "that charge first, so ringing is not mistaken for a breakdown."
+        ),
+    ),
+    Option(
         "drop_window_s",
         "number",
         "Drop window",
@@ -153,6 +167,7 @@ def _detect_events(
         coarse_step_s=params["coarse_step_s"],
         scope_bw_hz=params["scope_bw_hz"],
         capacitance_f=params.get("capacitance_f"),
+        polarity=params.get("polarity") or _sg.DEFAULT_POLARITY,
     )
     return _payload_from_result(result)
 
@@ -194,6 +209,7 @@ def _run_full_analysis(
         merge_gap_s=params["merge_gap_s"],
         scope_bw_hz=params["scope_bw_hz"],
         capacitance_f=params.get("capacitance_f"),
+        polarity=params.get("polarity") or _sg.DEFAULT_POLARITY,
         run=run,
         coarse_step_s=params["coarse_step_s"],
         time_s=time_s,
@@ -361,6 +377,47 @@ def _column_header(name: str) -> str:
     }.get(name, name)
 
 
+def _polarity_text(detection: dict[str, Any]) -> str:
+    polarity = str(detection.get("polarity") or _sg.DEFAULT_POLARITY)
+    if polarity != "both":
+        return polarity
+    n_pos = int(detection.get("n_positive") or 0)
+    n_neg = int(detection.get("n_negative") or 0)
+    return f"both ({n_pos} positive, {n_neg} negative)"
+
+
+def _undersampled_note(detection: dict[str, Any]) -> str:
+    """Warn when the capture cannot resolve the collapse the search looks for."""
+    dt = detection.get("sample_interval_s")
+    window = detection.get("drop_window_s")
+    try:
+        dt_f, window_f = float(dt), float(window)
+    except (TypeError, ValueError):
+        return ""
+    if dt_f <= window_f:
+        return ""
+    return (
+        f"Sampled every {format_seconds(dt_f)}, coarser than the "
+        f"{format_seconds(window_f)} drop window: collapses are not resolved, "
+        "so noise can pass as breakdowns."
+    )
+
+
+def _count_text(n_events: int, n_typical: int, detection: dict[str, Any]) -> str:
+    noun = "breakdown" if n_events == 1 else "breakdowns"
+    text = f"{n_events} {noun} ({n_typical} typical)"
+    polarity = str(detection.get("polarity") or _sg.DEFAULT_POLARITY)
+    if polarity == "both":
+        text += (
+            f" · {int(detection.get('n_positive') or 0)} positive, "
+            f"{int(detection.get('n_negative') or 0)} negative"
+        )
+    elif polarity == "negative":
+        text += " · negative polarity"
+    note = _undersampled_note(detection)
+    return f"{text}\n{note}" if note else text
+
+
 def _format_summary(payload: dict[str, Any], out_dir: Path) -> str:
     detection = payload.get("detection") or {}
     summary = payload.get("summary") or {}
@@ -369,6 +426,7 @@ def _format_summary(payload: dict[str, Any], out_dir: Path) -> str:
     n_typical = int(payload.get("n_typical", detection.get("n_typical", 0)))
     lines = [
         f"Events: {n_events}  typical: {n_typical}",
+        f"Polarity: {_polarity_text(detection)}",
         f"Output: {out_dir}",
         "",
         "Typical-population summary",
@@ -437,6 +495,8 @@ class SparkGapWindow(AnalysisWindow):
         self._busy_detect = False
         self._busy_analysis = False
         super().__init__(spec, controller)
+        self._browser.enable_extended_selection()
+        self._browser.selection_changed.connect(self._on_catalogue_selection)
         self.resize(1440, 800)
         splitter = self.centralWidget()
         if isinstance(splitter, QSplitter) and splitter.count() == 3:
@@ -475,6 +535,7 @@ class SparkGapWindow(AnalysisWindow):
         self._capture_label = QLabel("Open a waveform, then detect events.")
         self._capture_label.setWordWrap(True)
         self._count_label = QLabel("No detection yet.")
+        self._count_label.setWordWrap(True)
 
         self._detect_btn = QPushButton("Detect events")
         self._detect_btn.setDefault(True)
@@ -559,7 +620,24 @@ class SparkGapWindow(AnalysisWindow):
         self._refresh_compose()
         return [panel, self._tabs]
 
-    def _on_capture_selected(self, record: CaptureRecord | None) -> None:
+    def _selected_measurements(self) -> list[CaptureRecord]:
+        return [
+            record
+            for record in self._browser.selected_records()
+            if self._is_accepted(record)
+        ]
+
+    def _on_catalogue_selection(self) -> None:
+        self._show_selection_status(self._browser.current_record())
+        self._apply_histogram_pool()
+        if self._compose is not None:
+            self._compose.set_catalogue_selection(self._selected_measurements())
+
+    def _show_selection_status(self, record: CaptureRecord | None) -> None:
+        selected = self._selected_measurements()
+        if len(selected) >= 2:
+            self.statusBar().showMessage(f"{len(selected)} measurements selected")
+            return
         if record is None:
             self.statusBar().showMessage("Select a capture")
             return
@@ -570,6 +648,56 @@ class SparkGapWindow(AnalysisWindow):
             )
             return
         self.statusBar().showMessage(str(record.path))
+
+    def _on_capture_selected(self, record: CaptureRecord | None) -> None:
+        self._show_selection_status(record)
+
+    def _analysis_payload(self, record: CaptureRecord) -> dict[str, Any] | None:
+        """Saved summary, or the open capture's live detect result when it has one."""
+        if (
+            self._chosen is not None
+            and Path(self._chosen.path).resolve() == Path(record.path).resolve()
+            and self._preview
+            and self._preview.get("events")
+        ):
+            return {
+                "events": list(self._preview["events"]),
+                "detection": dict(self._preview.get("detection") or {}),
+            }
+        return load_analysis_events(record.path)
+
+    def _apply_histogram_pool(self) -> None:
+        if self._explorer is None:
+            return
+        records = self._selected_measurements()
+        if len(records) < 2:
+            self._explorer.clear_histogram_pool()
+            return
+        events: list[dict[str, Any]] = []
+        detections: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for record in records:
+            payload = self._analysis_payload(record)
+            rows = list(payload.get("events") or []) if payload else []
+            if payload is None or not rows:
+                missing.append(str(record.run_name or record.stem))
+                continue
+            events.extend(rows)
+            detection = payload.get("detection")
+            detections.append(detection if isinstance(detection, dict) else {})
+        if not events:
+            self._explorer.set_histogram_pool([], {}, missing=missing)
+            return
+        shared = _scopes_match(detections)
+        count = len(detections)
+        noun = "measurement" if count == 1 else "measurements"
+        self._explorer.set_histogram_pool(
+            events,
+            detections[0] if shared else {},
+            title_suffix=f"pooled from {count} {noun}",
+            clear_footer=not shared,
+            missing=missing,
+        )
 
     def _handle_opened(self, record: CaptureRecord) -> None:
         self._load_gen += 1
@@ -587,6 +715,7 @@ class SparkGapWindow(AnalysisWindow):
         self._summary.clear()
         self._count_label.setText("No detection yet.")
         self._capture_label.setText(f"Loading {record.stem}…")
+        self._apply_histogram_pool()
         self._loaded_meta = dict(record.metadata)
         self._loading_path = record.path
         self._update_actions()
@@ -694,6 +823,7 @@ class SparkGapWindow(AnalysisWindow):
             "drop_window_s": params["drop_window_s"],
             "merge_gap_s": params["merge_gap_s"],
             "coarse_step_s": params["coarse_step_s"],
+            "polarity": params.get("polarity") or _sg.DEFAULT_POLARITY,
             "include_first": params["include_first"],
             "capacitance_f": params.get("capacitance_f"),
         }
@@ -770,7 +900,8 @@ class SparkGapWindow(AnalysisWindow):
                 detection,
             )
         self._refresh_compose()
-        self._count_label.setText(f"{n_events} breakdowns ({n_typical} typical)")
+        self._apply_histogram_pool()
+        self._count_label.setText(_count_text(n_events, n_typical, detection))
 
     def _fill_preview_table(self, events: list[EventMark]) -> None:
         self._table.setRowCount(len(events))
@@ -957,12 +1088,26 @@ class SparkGapWindow(AnalysisWindow):
         if self._chosen is not None and self._preview and self._preview.get("events"):
             live = {
                 "stem": self._chosen.stem,
+                "path": str(self._chosen.path),
                 "events": self._preview["events"],
                 "detection": self._preview.get("detection") or {},
             }
         self._compose.set_sources(records, live)
+        self._compose.set_catalogue_selection(self._selected_measurements())
         plots = self._controller.resolved_data_root() / CAMPAIGN_SPARK_GAP / "Data" / "plots"
         self._compose.set_pdf_default(plots / "compose.pdf")
+
+
+def _scopes_match(detections: list[dict[str, Any]]) -> bool:
+    """True when every analysis reports the same scope bandwidth and sample rate."""
+    if len(detections) <= 1:
+        return True
+
+    def key(detection: dict[str, Any]) -> tuple[Any, Any]:
+        return (detection.get("scope_bw_hz"), detection.get("sample_rate_hz"))
+
+    first = key(detections[0])
+    return all(key(detection) == first for detection in detections[1:])
 
 
 def _create_window(controller: Any) -> SparkGapWindow:

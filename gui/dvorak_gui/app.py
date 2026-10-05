@@ -14,6 +14,7 @@ from .macos_identity import configure as configure_macos_identity
 from .registry import get
 from .rootbridge import RootBridge
 from .window import AnalysisWindow
+from .workers import wait_for_jobs
 
 
 def _repo_root() -> Path:
@@ -88,6 +89,8 @@ class AppController(QObject):
 
     def shutdown(self) -> None:
         self.root.close()
+        # Background threads must end before Python tears down Qt objects.
+        wait_for_jobs()
 
     def _track(self, window: QWidget) -> None:
         self._windows.append(window)

@@ -31,7 +31,9 @@ from spark_gap import (
     DEFAULT_DROP_THRESHOLD_V as _LIB_DROP_THRESHOLD_V,
     DEFAULT_DROP_WINDOW_S as _LIB_DROP_WINDOW_S,
     DEFAULT_MERGE_GAP_S as _LIB_MERGE_GAP_S,
+    DEFAULT_POLARITY,
     DEFAULT_SCOPE_BW_HZ as _LIB_SCOPE_BW_HZ,
+    POLARITIES,
 )
 from spark_gap_report import print_report, run_analysis
 
@@ -242,6 +244,16 @@ def main() -> None:
         help=f"Merge hits closer than this many seconds (default: {DEFAULT_MERGE_GAP_S})",
     )
     parser.add_argument(
+        "--polarity",
+        choices=POLARITIES,
+        default=DEFAULT_POLARITY,
+        help=(
+            "Breakdowns to detect: positive (downward collapse from V > 0), "
+            "negative (upward collapse from V < 0), or both "
+            f"(default: {DEFAULT_POLARITY})"
+        ),
+    )
+    parser.add_argument(
         "--scope-bw",
         type=float,
         default=DEFAULT_SCOPE_BW_HZ,
@@ -306,6 +318,7 @@ def main() -> None:
             "drop_threshold_v": args.drop_threshold,
             "drop_window_s": args.drop_window,
             "merge_gap_s": args.merge_gap,
+            "polarity": args.polarity,
             "include_first": args.include_first,
             "capacitance_f": args.capacitance,
         }
@@ -331,6 +344,7 @@ def main() -> None:
         scope_bw_hz=args.scope_bw,
         capacitance_f=args.capacitance,
         run=run,
+        polarity=args.polarity,
     )
     print_report(result)
     print(f"\nWrote analysis to {out_dir}")

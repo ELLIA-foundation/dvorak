@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dvorak_root.layout import fitted_size
+from dvorak_root.layout import fitted_size, screen_spec
 
 from ..jsrootview import JsRootView
 from ..rootbridge import RootBridge
@@ -153,7 +153,9 @@ class RootCanvas(QWidget):
         size = fitted_size(spec, *self._view.canvas_size())
 
         def job() -> str:
-            reply = client.render(spec, outputs=("json",), size=size)
+            reply = client.render(
+                spec, outputs=("json",), size=size, wanted=lambda: gen == self._gen
+            )
             return str(reply.get("json") or "")
 
         def done(result: object) -> None:
@@ -361,7 +363,15 @@ class RootGallery(QWidget):
             rendered: dict[str, tuple[str, int]] = {}
             for spec in specs:
                 size = fitted_size(spec, *pane)
-                reply = client.render(spec, outputs=("json",), size=size)
+                # The saved pack keeps every ramp at full resolution (over a
+                # million points for a long capture). Draw a screen copy;
+                # Save PDF still renders the full spec.
+                reply = client.render(
+                    screen_spec(spec),
+                    outputs=("json",),
+                    size=size,
+                    wanted=lambda: gen == self._gen,
+                )
                 rendered[str(spec.get("name"))] = (str(reply.get("json") or ""), size[1])
             return rendered
 

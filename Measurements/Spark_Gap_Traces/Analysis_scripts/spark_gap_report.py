@@ -37,6 +37,7 @@ from lib.waveform import decimate_minmax, load_metadata, pick_time_scale, pick_v
 from spark_gap import (
     CSV_COLUMNS,
     DEFAULT_COARSE_STEP_S,
+    DEFAULT_POLARITY,
     EVENT_FIELDS,
     AnalysisResult,
     SparkGapEvent,
@@ -573,6 +574,7 @@ def run_analysis(
     time_s: np.ndarray | None = None,
     voltage_v: np.ndarray | None = None,
     metadata: dict[str, Any] | None = None,
+    polarity: str = DEFAULT_POLARITY,
 ) -> AnalysisResult:
     if time_s is None or voltage_v is None:
         data = np.load(npz_path)
@@ -589,6 +591,7 @@ def run_analysis(
         coarse_step_s=coarse_step_s if coarse_step_s is not None else DEFAULT_COARSE_STEP_S,
         scope_bw_hz=scope_bw_hz,
         capacitance_f=capacitance_f,
+        polarity=polarity,
     )
     write_analysis(result, npz_path, out_dir, include_first, show=show, run=run)
     return result
