@@ -1,0 +1,5 @@
+frequency_hz,v_requested_vpp,v_nominal_vpp,v_scope_vpp,f_scope_hz,ratio,ratio_db,scope_limited,v_div,vertical_status,thd
+1000.0,max,10.0,nan,1011.561,nan,nan,False,1.0,clipped,nan
+1356.830976209873,max,10.0,nan,1372.517,nan,nan,False,1.0,clipped,nan
+1840.9902980026347,max,10.0,nan,1862.273,nan,nan,False,1.0,clipped,nan
+2497.91266323182,max,10.0,nan,2497.913,nan,nan,False,1.0,clipped,nan
