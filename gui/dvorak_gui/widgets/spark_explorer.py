@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -436,6 +437,16 @@ class ComposePane(QWidget):
         self._overlay_layout.toggled.connect(self._on_layout)
         self._stack.toggled.connect(self._on_layout)
 
+        self._columns_label = QLabel("Columns")
+        self._columns = QSpinBox()
+        self._columns.setRange(1, int(_fig.COMPOSE_MAX_PADS))
+        self._columns.setValue(2)
+        self._columns.setToolTip(
+            "Subplot columns for a stack of one metric. "
+            "Four measurements and 2 columns is a 2×2 grid."
+        )
+        self._columns.valueChanged.connect(self._on_columns)
+
         self._population_label = QLabel("Population")
         self._typical = QRadioButton("Typical")
         self._all = QRadioButton("All events")
@@ -470,6 +481,8 @@ class ComposePane(QWidget):
         controls.addWidget(self._layout_label)
         controls.addWidget(self._overlay_layout)
         controls.addWidget(self._stack)
+        controls.addWidget(self._columns_label)
+        controls.addWidget(self._columns)
         controls.addWidget(self._population_label)
         controls.addWidget(self._typical)
         controls.addWidget(self._all)
@@ -548,8 +561,10 @@ class ComposePane(QWidget):
             self._metrics,
         ):
             widget.setEnabled(not wave)
-        for widget in (self._layout_label, self._overlay_layout, self._stack):
-            widget.setEnabled(wave)
+        multi_metric = (not wave) and len(self._checked_metric_items()) > 1
+        grid = self._stack.isChecked() and not multi_metric
+        self._columns_label.setEnabled(grid)
+        self._columns.setEnabled(grid)
         self._all_btn.setText("All" if wave else "All analyzed")
 
     def _on_figure_mode(self, checked: bool) -> None:
@@ -594,6 +609,11 @@ class ComposePane(QWidget):
 
     def _on_layout(self, checked: bool) -> None:
         if not checked or self._updating:
+            return
+        self._redraw()
+
+    def _on_columns(self, _value: int) -> None:
+        if self._updating:
             return
         self._redraw()
 
@@ -681,6 +701,7 @@ class ComposePane(QWidget):
     def _redraw(self, _checked: bool = False) -> None:
         if self._updating:
             return
+        self._apply_mode_visibility()
         if self._wave.isChecked():
             self._redraw_waveforms()
             return
@@ -709,20 +730,27 @@ class ComposePane(QWidget):
             self._note.setText("")
             self._canvas.clear("Select at least one metric.")
             return
-        limit = int(_fig.compose_source_limit(len(names)))
-        truncated = len(sources) > limit
-        sources = sources[:limit]
-        if truncated:
-            self._note.setText(
-                f"Showing the first {limit} measurements ({_fig.COMPOSE_MAX_PADS}-pad limit)."
+        stacked = self._stack.isChecked()
+        multi = len(names) > 1
+        if stacked and multi:
+            limit = int(_fig.compose_source_limit(len(names)))
+            limit_note = (
+                f"Showing the first {limit} measurements "
+                f"({_fig.COMPOSE_MAX_PADS}-pad limit)."
             )
         else:
-            self._note.setText("")
+            limit = int(_fig.COMPOSE_MAX_PADS)
+            limit_note = f"Showing the first {limit} measurements."
+        truncated = len(sources) > limit
+        sources = sources[:limit]
+        self._note.setText(limit_note if truncated else "")
         spec = _fig.compose_figure_spec(
             sources,
             names=names,
             mode="histogram" if self._hist.isChecked() else "sequence",
             include_first=self._all.isChecked(),
+            layout="stacked" if stacked else "overlay",
+            cols=int(self._columns.value()) if stacked and not multi else None,
         )
         self._canvas.set_spec(spec)
 
@@ -798,9 +826,10 @@ class ComposePane(QWidget):
             self._canvas.clear(errors[0] if errors else "Select measurements.")
             return
         layout_name = "stacked" if self._stack.isChecked() else "overlay"
+        columns = int(self._columns.value())
         self._canvas.set_spec(
-            _fig.compose_waveform_spec(screen, layout=layout_name),
-            export_spec=_fig.compose_waveform_spec(export, layout=layout_name),
+            _fig.compose_waveform_spec(screen, layout=layout_name, cols=columns),
+            export_spec=_fig.compose_waveform_spec(export, layout=layout_name, cols=columns),
         )
 
     def _receive_waveforms(self, epoch: int, result: object) -> None:

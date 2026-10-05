@@ -220,8 +220,51 @@ class RootClient:
         pdf_path: str | None = None,
         macro_path: str | None = None,
         directory: str | None = None,
+        size: tuple[int, int] | None = None,
         timeout: float = 60,
     ) -> dict:
+        request: dict = {"op": "render", "spec": spec, "outputs": list(outputs)}
+        if pdf_path:
+            request["pdf_path"] = pdf_path
+        if macro_path:
+            request["macro_path"] = macro_path
+        if directory:
+            request["dir"] = directory
+        if size:
+            request["size"] = [int(size[0]), int(size[1])]
+        return self._request(request, timeout)
+
+    def legacy(
+        self,
+        canvas_json: str,
+        *,
+        name: str,
+        title: str,
+        view: dict | None = None,
+        outputs: tuple[str, ...] | list[str] = ("macro",),
+        macro_path: str | None = None,
+        pdf_path: str | None = None,
+        size: tuple[int, int] | None = None,
+        timeout: float = 60,
+    ) -> dict:
+        """Rebuild a canvas exported from the JSROOT page as a macro and/or PDF."""
+        request: dict = {
+            "op": "legacy",
+            "canvas": canvas_json,
+            "name": name,
+            "title": title,
+            "view": view or {},
+            "outputs": list(outputs),
+        }
+        if macro_path:
+            request["macro_path"] = macro_path
+        if pdf_path:
+            request["pdf_path"] = pdf_path
+        if size:
+            request["size"] = [int(size[0]), int(size[1])]
+        return self._request(request, timeout)
+
+    def _request(self, request: dict, timeout: float) -> dict:
         self.wait()
         if not self.available:
             error = (self.report or {}).get("error") or "ROOT is not available."
@@ -232,18 +275,7 @@ class RootClient:
             self._ensure()
             self._ids += 1
             ident = str(self._ids)
-            request = {
-                "op": "render",
-                "id": ident,
-                "spec": spec,
-                "outputs": list(outputs),
-            }
-            if pdf_path:
-                request["pdf_path"] = pdf_path
-            if macro_path:
-                request["macro_path"] = macro_path
-            if directory:
-                request["dir"] = directory
+            request = dict(request, id=ident)
             assert self._proc is not None and self._proc.stdin is not None
             payload = json.dumps(request, separators=(",", ":"), allow_nan=False) + "\n"
             self._proc.stdin.write(payload.encode("utf-8"))

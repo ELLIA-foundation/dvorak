@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dvorak_root.layout import fitted_size
+
 from ..jsrootview import JsRootView
 from ..rootbridge import RootBridge
 from ..rootexport import open_in_legacy_root, save_pdf
@@ -23,7 +25,11 @@ from .figure_gallery import FigureGallery
 
 
 class RootCanvas(QWidget):
-    """One figure spec on a JSROOT view, with Legacy ROOT and PDF."""
+    """One figure spec on a JSROOT view, with Legacy ROOT and PDF.
+
+    The figure is laid out for the pane it is shown in and drawn again,
+    debounced, when the pane changes size.
+    """
 
     def __init__(
         self,
@@ -47,9 +53,11 @@ class RootCanvas(QWidget):
         self._debounce.timeout.connect(self._commit_spec)
 
         self._view = JsRootView(bridge.jsroot, self)
+        self._view.resized.connect(self._on_view_resized)
         self._legacy = QPushButton("Legacy ROOT")
         self._legacy.setToolTip(
-            "Open this figure in the interactive ROOT GUI, including titles and colors edited here"
+            "Open this figure in the interactive ROOT GUI as shown here: "
+            "zoom, moved legend, log axes, and titles or colors edited from the menus"
         )
         self._legacy.clicked.connect(self._open_legacy)
         self._pdf = QPushButton("Save PDF…")
@@ -126,6 +134,13 @@ class RootCanvas(QWidget):
             )
             self._update_buttons()
             return
+        self._update_buttons()
+        self._render()
+
+    def _render(self) -> None:
+        spec = self._spec
+        if spec is None or not self._view.usable:
+            return
         showing = (
             self._view.view is not None
             and self._view.stack.currentWidget() is self._view.view
@@ -133,19 +148,19 @@ class RootCanvas(QWidget):
         self._status.setText("Drawing…")
         if not showing:
             self._view.show_message("Rendering…")
-        self._update_buttons()
         gen = self._gen
         client = self._bridge.client
+        size = fitted_size(spec, *self._view.canvas_size())
 
         def job() -> str:
-            reply = client.render(spec, outputs=("json",))
+            reply = client.render(spec, outputs=("json",), size=size)
             return str(reply.get("json") or "")
 
         def done(result: object) -> None:
             if gen != self._gen:
                 return
             if isinstance(result, str) and result:
-                self._view.draw(result)
+                self._view.draw(result, size[1])
                 self._status.setText("")
             else:
                 self._view.show_message("Empty figure.")
@@ -158,6 +173,12 @@ class RootCanvas(QWidget):
             self._view.show_message(error)
 
         self._render_worker.start(job, on_finished=done, on_failed=failed)
+
+    def _on_view_resized(self, _width: int, _height: int) -> None:
+        if self._spec is None or self._debounce.isActive():
+            return
+        self._gen += 1
+        self._render()
 
     def _on_root_ready(self, report: dict) -> None:
         path = str(report.get("jsroot") or "")
@@ -200,6 +221,7 @@ class RootCanvas(QWidget):
             self._export_worker,
             spec,
             default,
+            view=self._view,
             on_status=self._status.setText,
         )
 
@@ -211,7 +233,7 @@ class RootGallery(QWidget):
         super().__init__(parent)
         self._bridge = bridge
         self._specs: list[dict] = []
-        self._json: dict[str, str] = {}
+        self._json: dict[str, tuple[str, int]] = {}
         self._pngs: list[tuple[str, Path]] = []
         self._gen = 0
         self._render_worker = WorkerHandle()
@@ -222,6 +244,7 @@ class RootGallery(QWidget):
         self._list.currentRowChanged.connect(self._show_row)
 
         self._view = JsRootView(bridge.jsroot, self)
+        self._view.resized.connect(self._on_view_resized)
         self._gallery = FigureGallery()
         self._stack = QStackedWidget()
         self._stack.addWidget(self._view)
@@ -229,7 +252,8 @@ class RootGallery(QWidget):
 
         self._legacy = QPushButton("Legacy ROOT")
         self._legacy.setToolTip(
-            "Open the selected figure in the interactive ROOT GUI, including titles and colors edited here"
+            "Open the selected figure in the interactive ROOT GUI as shown here: "
+            "zoom, moved legend, log axes, and titles or colors edited from the menus"
         )
         self._legacy.clicked.connect(self._open_legacy)
         self._pdf = QPushButton("Save PDF…")
@@ -300,6 +324,12 @@ class RootGallery(QWidget):
             self._view.show_message(str(report["error"]))
         self._apply_mode()
 
+    def _on_view_resized(self, _width: int, _height: int) -> None:
+        if not self._js_ready():
+            return
+        self._gen += 1
+        self._render_specs()
+
     def _js_ready(self) -> bool:
         return self._view.usable and bool(self._specs)
 
@@ -324,19 +354,21 @@ class RootGallery(QWidget):
             return
         gen = self._gen
         client = self._bridge.client
+        pane = self._view.canvas_size()
         self._status.setText("Drawing figures…")
 
-        def job() -> dict[str, str]:
-            rendered: dict[str, str] = {}
+        def job() -> dict[str, tuple[str, int]]:
+            rendered: dict[str, tuple[str, int]] = {}
             for spec in specs:
-                reply = client.render(spec, outputs=("json",))
-                rendered[str(spec.get("name"))] = str(reply.get("json") or "")
+                size = fitted_size(spec, *pane)
+                reply = client.render(spec, outputs=("json",), size=size)
+                rendered[str(spec.get("name"))] = (str(reply.get("json") or ""), size[1])
             return rendered
 
         def done(result: object) -> None:
             if gen != self._gen or not isinstance(result, dict):
                 return
-            self._json = {key: value for key, value in result.items() if value}
+            self._json = {key: value for key, value in result.items() if value[0]}
             self._status.setText("")
             self._show_row(self._list.currentRow())
 
@@ -359,7 +391,7 @@ class RootGallery(QWidget):
             return
         payload = self._json.get(str(spec.get("name")))
         if payload:
-            self._view.draw(payload)
+            self._view.draw(*payload)
         else:
             self._view.show_message("Rendering…")
         self._update_buttons()
@@ -419,5 +451,6 @@ class RootGallery(QWidget):
             self._export_worker,
             spec,
             default,
+            view=self._view if self._js_ready() else None,
             on_status=self._status.setText,
         )

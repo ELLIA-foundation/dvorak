@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dvorak_root.layout import fitted_size
 from lib.paths import CAMPAIGN_FREQUENCY_RESPONSES
 
 from ..campaign_import import load_campaign_module
@@ -61,11 +62,12 @@ class FrequencyWindow(AnalysisWindow):
 
     def _workspace_panes(self) -> list[QWidget]:
         self._view = JsRootView(self._controller.root.jsroot, self)
+        self._view.resized.connect(lambda _w, _h: self._draw())
         self._gallery = FigureGallery()
         self._gallery.set_placeholder("No saved PNG for this sweep.")
         self._legacy = QPushButton("Legacy ROOT")
         self._legacy.setToolTip(
-            "Open this sweep in the interactive ROOT GUI (root -l)"
+            "Open this sweep in the interactive ROOT GUI (root -l) as shown here"
         )
         self._legacy.clicked.connect(self._open_legacy_root)
         self._pdf = QPushButton("Save PDF…")
@@ -150,16 +152,17 @@ class FrequencyWindow(AnalysisWindow):
         if spec is None or self._view is None or not self._view.usable:
             return
         gen = id(spec)
+        size = fitted_size(spec, *self._view.canvas_size())
 
         def job() -> str:
-            reply = self._controller.root.client.render(spec, outputs=("json",))
+            reply = self._controller.root.client.render(spec, outputs=("json",), size=size)
             return str(reply.get("json") or "")
 
         def done(result: object) -> None:
             if self._spec_payload is None or id(self._spec_payload) != gen:
                 return
             if self._view is not None and isinstance(result, str) and result:
-                self._view.draw(result)
+                self._view.draw(result, size[1])
 
         def failed(message: str) -> None:
             if self._spec_payload is None or id(self._spec_payload) != gen:
@@ -197,6 +200,7 @@ class FrequencyWindow(AnalysisWindow):
             self._export_worker,
             self._spec_payload,
             default,
+            view=self._view if self._view is not None and self._view.isVisible() else None,
             on_status=self.statusBar().showMessage,
         )
 

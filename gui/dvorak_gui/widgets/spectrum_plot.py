@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dvorak_root.text import root_text
+
 from ..campaign_import import load_spectrum_module
 
 _COLORS = (
@@ -165,15 +167,12 @@ def _is_reference(curve: _PlotCurve, ref_key: str | None) -> bool:
 
 
 def _tex_label(text: str) -> str:
-    """Keep filenames and line names readable in TLatex."""
-    return (
-        text.replace("_", r"\_")
-        .replace("α", r"#alpha")
-        .replace("β", r"#beta")
-        .replace("γ", r"#gamma")
-        .replace("σ", r"#sigma")
-        .replace("±", r"#pm")
-    )
+    """Keep filenames and line names readable in TLatex.
+
+    A bare underscore already prints as itself. A backslash would switch ROOT
+    to TMathText, which sets the whole label in math italics.
+    """
+    return root_text(text)
 
 
 class SpectrumPlot(QWidget):
@@ -282,10 +281,11 @@ class SpectrumPlot(QWidget):
             panel["notes"].append({"text": self._roi_note(), "align": "left"})
         if self._cursors.isChecked():
             panel["notes"].append({"text": self._cursor_note(), "align": "right"})
+        # Legacy ROOT and the PDF take the on-screen plot's shape.
         return {
             "name": name,
-            "width": 960,
-            "height": 520,
+            "width": max(480, self._plot.width()),
+            "height": max(320, self._plot.height()),
             "cols": 1,
             "panels": [panel],
         }

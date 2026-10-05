@@ -276,10 +276,11 @@ class TracePlot(QWidget):
                     "label": f"{event.event_index}:{event.v_breakdown / 1000.0:.1f} kV",
                 }
             )
+        # Legacy ROOT and the PDF take the on-screen plot's shape.
         return {
             "name": name,
-            "width": 960,
-            "height": 520,
+            "width": max(480, self._plot.width()),
+            "height": max(320, self._plot.height()),
             "cols": 1,
             "panels": [panel],
         }

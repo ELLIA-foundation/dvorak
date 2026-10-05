@@ -200,53 +200,323 @@ def compose_figure_spec(
     names: list[str],
     mode: str,
     include_first: bool,
+    layout: str = "stacked",
+    cols: int | None = None,
 ) -> dict[str, Any]:
-    """One pad per measurement, one row per metric (row-major, cols = measurements)."""
+    """Histograms or sequences for several measurements.
+
+    ``layout`` is ``overlay`` (one axes per metric, every measurement on it)
+    or ``stacked`` (one subplot per measurement). ``cols`` is the subplot
+    column count for a stack of a single metric. Several metrics keep one
+    column per measurement and ignore ``cols``.
+    Sequence x is ``t_break``, shared across the measurements being compared.
+    """
     fields = {field["name"]: field for field in PLOT_METRICS}
-    metrics = [name for name in names if name in fields]
+    metrics = [name for name in names if name in fields][:COMPOSE_MAX_PADS]
     rows_src = [src for src in sources if src.get("events")]
-    limit = compose_source_limit(len(metrics) or 1)
+    stacked = layout == "stacked"
+    multi = len(metrics) > 1
+    limit = compose_source_limit(len(metrics) or 1) if stacked and multi else COMPOSE_MAX_PADS
     rows_src = rows_src[:limit]
-    metrics = metrics[:COMPOSE_MAX_PADS]
-    panels = []
-    for name in metrics:
-        field = fields[name]
-        for src in rows_src:
-            pool = _filter_events(list(src.get("events") or []), include_first)
-            label = str(src.get("label") or "measurement")
-            if mode == "histogram":
-                panel = _hist(
-                    [row.get(name) for row in pool],
-                    float(field["scale"]),
-                    str(field["unit"]),
-                    str(field["label"]),
-                )
-            else:
-                panel = _sequence_panel(pool, field, mark_first=include_first)
-            panel["title"] = label
-            panels.append(panel)
+    if mode == "histogram":
+        panels = _compose_histogram_panels(
+            rows_src, metrics, include_first, stacked=stacked
+        )
+    else:
+        panels = _compose_sequence_panels(
+            rows_src, metrics, include_first, stacked=stacked
+        )
     if not panels:
         panels.append({"title": "Select measurements and a metric", "series": []})
-    detection = dict(rows_src[0].get("detection") or {}) if rows_src else {}
-    cols = max(1, len(rows_src)) if rows_src else 1
-    n_rows = max(1, math.ceil(len(panels) / cols))
+    if stacked and not multi:
+        columns = max(1, min(int(cols or 1), len(rows_src) or 1))
+    elif stacked:
+        columns = max(1, len(rows_src)) if rows_src else 1
+    else:
+        columns = 1
+    n_rows = max(1, math.ceil(len(panels) / columns))
     kind = "Histograms" if mode == "histogram" else "Sequential"
+    arrangement = "stacked" if stacked else "overlay"
+    detection = dict(rows_src[0].get("detection") or {}) if rows_src else {}
     return {
-        "name": f"compose_{mode}",
+        "name": f"compose_{mode}_{arrangement}",
         "label": f"Compose {kind}",
-        "title": f"{kind} — compose",
+        "title": f"{kind} — {arrangement}",
         "footer": scope_limit_footer(detection) if detection else "",
-        "cols": cols,
-        "width": max(480, 360 * cols),
-        "height": max(360, 280 * n_rows + 40),
+        "cols": columns,
+        "width": 900 if columns == 1 else max(560, 400 * columns),
+        "height": max(520, 300 * n_rows + 60),
         "panels": panels,
     }
+
+
+def _metric_values(pool: list[dict[str, Any]], field: dict[str, Any]) -> list[float]:
+    scale = float(field["scale"])
+    name = str(field["name"])
+    return [value for row in pool if (value := _opt(row.get(name), scale)) is not None]
+
+
+def _shared_hist_limits(groups: list[list[float]]) -> tuple[float, float, float, int]:
+    present = [np.asarray(values, dtype=float) for values in groups if values]
+    if not present:
+        return 0.0, 1.0, 1.0, 5
+    combined = np.concatenate(present)
+    lo = float(np.min(combined))
+    hi = float(np.max(combined))
+    if hi <= lo:
+        pad = 1.0 if lo == 0.0 else abs(lo) * 0.05
+        lo -= pad
+        hi += pad
+    else:
+        pad = 0.02 * (hi - lo)
+        lo -= pad
+        hi += pad
+    longest = max(len(values) for values in present)
+    nbins = int(min(10, max(5, longest // 2)))
+    peak = 1.0
+    for values in present:
+        counts, _edges = np.histogram(values, bins=nbins, range=(lo, hi))
+        if len(counts):
+            peak = max(peak, float(np.max(counts)))
+    return lo, hi, peak * 1.05, nbins
+
+
+def _compose_histogram_panels(
+    sources: list[dict[str, Any]],
+    metrics: list[str],
+    include_first: bool,
+    *,
+    stacked: bool,
+) -> list[dict[str, Any]]:
+    fields = {field["name"]: field for field in PLOT_METRICS}
+    panels: list[dict[str, Any]] = []
+    for name in metrics:
+        field = fields[name]
+        prepared: list[tuple[str, list[float], str]] = []
+        for index, src in enumerate(sources):
+            pool = _filter_events(list(src.get("events") or []), include_first)
+            prepared.append(
+                (
+                    str(src.get("label") or "measurement"),
+                    _metric_values(pool, field),
+                    _color_index(index),
+                )
+            )
+        lo, hi, ymax, nbins = _shared_hist_limits([values for _label, values, _color in prepared])
+        if stacked:
+            for label, values, _color in prepared:
+                panel = _hist(values, 1.0, str(field["unit"]), str(field["label"]))
+                hist = panel.get("hist")
+                if isinstance(hist, dict):
+                    hist["xmin"] = lo
+                    hist["xmax"] = hi
+                    hist["nbins"] = nbins
+                panel["title"] = label
+                panel["xmin"] = lo
+                panel["xmax"] = hi
+                panel["ymin"] = 0.0
+                panel["ymax"] = ymax
+                panels.append(panel)
+            continue
+        hists = []
+        unit = str(field["unit"])
+        for label, values, color in prepared:
+            if not values:
+                continue
+            arr = np.asarray(values, dtype=float)
+            mean = float(np.mean(arr))
+            median = float(np.median(arr))
+            hists.append(
+                {
+                    "values": [float(value) for value in arr],
+                    "nbins": nbins,
+                    "xmin": lo,
+                    "xmax": hi,
+                    "mean": mean,
+                    "median": median,
+                    "color": color,
+                    "label": f"{label}  n={len(arr)}, mean {_fmt(mean)} {unit}",
+                }
+            )
+        panels.append(
+            {
+                "title": str(field["label"]),
+                "x_title": f"{field['label']} ({unit})",
+                "y_title": "Count",
+                "xmin": lo,
+                "xmax": hi,
+                "ymin": 0.0,
+                "ymax": ymax,
+                "hists": hists,
+                "legend_corner": "left",
+            }
+        )
+    return panels
+
+
+def _sequence_time_scale(
+    sources: list[dict[str, Any]], include_first: bool
+) -> tuple[float, str]:
+    from lib.waveform import time_scale_factor
+
+    times: list[float] = []
+    for src in sources:
+        pool = _filter_events(list(src.get("events") or []), include_first)
+        times.extend(
+            value for row in pool if (value := _opt(row.get("t_break"), 1.0)) is not None
+        )
+    if len(times) < 2:
+        return 1e3, "ms"
+    span = float(max(times) - min(times))
+    return time_scale_factor(span)
+
+
+def _sequence_xy(
+    pool: list[dict[str, Any]], field: dict[str, Any], t_scale: float
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    xs: list[float] = []
+    ys: list[float] = []
+    first_x: list[float] = []
+    first_y: list[float] = []
+    scale = float(field["scale"])
+    name = str(field["name"])
+    for row in pool:
+        t = _opt(row.get("t_break"), t_scale)
+        y = _opt(row.get(name), scale)
+        if t is None or y is None:
+            continue
+        xs.append(t)
+        ys.append(y)
+        if row.get("first_cycle"):
+            first_x.append(t)
+            first_y.append(y)
+    return xs, ys, first_x, first_y
+
+
+def _compose_sequence_panels(
+    sources: list[dict[str, Any]],
+    metrics: list[str],
+    include_first: bool,
+    *,
+    stacked: bool,
+) -> list[dict[str, Any]]:
+    fields = {field["name"]: field for field in PLOT_METRICS}
+    t_scale, t_unit = _sequence_time_scale(sources, include_first)
+    x_title = f"t_break ({t_unit})"
+    per_metric = []
+    all_x: list[float] = []
+    for name in metrics:
+        field = fields[name]
+        rows = []
+        all_y: list[float] = []
+        for index, src in enumerate(sources):
+            pool = _filter_events(list(src.get("events") or []), include_first)
+            xs, ys, first_x, first_y = _sequence_xy(pool, field, t_scale)
+            all_x.extend(xs)
+            all_y.extend(ys)
+            rows.append(
+                (
+                    str(src.get("label") or "measurement"),
+                    xs,
+                    ys,
+                    first_x,
+                    first_y,
+                    _color_index(index),
+                )
+            )
+        ymin, ymax = _padded_limits(np.asarray(all_y, dtype=float))
+        per_metric.append((field, rows, ymin, ymax))
+    xmin, xmax = _padded_limits(np.asarray(all_x, dtype=float))
+    panels: list[dict[str, Any]] = []
+    for field, rows, ymin, ymax in per_metric:
+        y_title = f"{field['label']} ({field['unit']})"
+        if stacked:
+            for label, xs, ys, first_x, first_y, color in rows:
+                series = [
+                    _series(
+                        xs,
+                        ys,
+                        label=str(field["label"]),
+                        color=color,
+                        line="solid",
+                        marker="circle",
+                        marker_size=0.9,
+                    )
+                ]
+                if include_first and first_x:
+                    series.append(
+                        _series(
+                            first_x,
+                            first_y,
+                            label="first_cycle",
+                            color=_RED,
+                            line="none",
+                            marker="circle",
+                            marker_size=1.2,
+                        )
+                    )
+                panels.append(
+                    {
+                        "title": label,
+                        "x_title": x_title,
+                        "y_title": y_title,
+                        "xmin": xmin,
+                        "xmax": xmax,
+                        "ymin": ymin,
+                        "ymax": ymax,
+                        "series": series,
+                        "legend_corner": "right",
+                        "headroom": True,
+                    }
+                )
+            continue
+        series = []
+        for label, xs, ys, first_x, first_y, color in rows:
+            series.append(
+                _series(
+                    xs,
+                    ys,
+                    label=label,
+                    color=color,
+                    line="solid",
+                    marker="circle",
+                    marker_size=0.8,
+                )
+            )
+            if include_first and first_x:
+                series.append(
+                    _series(
+                        first_x,
+                        first_y,
+                        label="",
+                        color=color,
+                        line="none",
+                        marker="square",
+                        marker_size=1.2,
+                    )
+                )
+        panels.append(
+            {
+                "title": str(field["label"]),
+                "x_title": x_title,
+                "y_title": y_title,
+                "xmin": xmin,
+                "xmax": xmax,
+                "ymin": ymin,
+                "ymax": ymax,
+                "series": series,
+                "legend_corner": "right",
+                "headroom": True,
+            }
+        )
+    return panels
 
 
 def compose_waveform_spec(
     sources: list[dict[str, Any]],
     *,
     layout: str,
+    cols: int | None = None,
 ) -> dict[str, Any]:
     """Full traces on one canvas. Time is already relative to each record start.
 
@@ -333,18 +603,23 @@ def compose_waveform_spec(
                 "series": series,
                 "legend_columns": 2,
                 "legend_corner": "right",
+                "headroom": True,
             }
         )
     kind = "stacked" if stacked else "overlay"
     count = max(1, len(panels))
+    columns = 1
+    if stacked:
+        columns = max(1, min(int(cols or 1), count))
+    n_rows = max(1, math.ceil(count / columns)) if stacked else 1
     return {
         "name": f"compose_waveform_{kind}",
         "label": f"Compose waveforms ({kind})",
         "title": f"Waveforms — {kind}",
         "footer": "",
-        "cols": 1,
-        "width": 900,
-        "height": max(420, 230 * count + 40) if stacked else 560,
+        "cols": columns,
+        "width": 900 if columns == 1 else max(480, 360 * columns),
+        "height": max(420, 230 * n_rows + 40) if stacked else 560,
         "panels": panels,
     }
 
@@ -914,27 +1189,32 @@ def _hist(values: list[float | None], scale: float, unit: str, title: str) -> di
     median = float(np.median(finite))
     cv = (std / mean) if mean != 0 else float("nan")
     cv_txt = f"{100 * cv:.1f}%" if math.isfinite(cv) else "—"
+    count = len(finite)
     panel["hist"] = {
         "values": [float(value) for value in finite],
-        "nbins": int(min(10, max(5, len(finite) // 2))),
+        "nbins": int(min(10, max(5, count // 2))),
         "mean": mean,
         "median": median,
         "color": _BLUE,
-        "label": title,
+        "label": f"{count} event{'s' if count != 1 else ''}",
+        "mean_label": f"mean {_fmt(mean)} {unit}",
+        "median_label": f"median {_fmt(median)} {unit}",
     }
     panel["notes"] = [
         {
             "align": "right",
-            "text": (
-                f"n={len(finite)}\n"
-                f"mean={mean:.3g} {unit}\n"
-                f"std={std:.3g} {unit}\n"
-                f"median={median:.3g} {unit}\n"
-                f"CV={cv_txt}"
-            ),
+            "text": f"σ = {_fmt(std)} {unit}\nCV = {cv_txt}",
         }
     ]
     return panel
+
+
+def _fmt(value: float) -> str:
+    """Three significant figures, without an exponent for ordinary magnitudes."""
+    magnitude = abs(value)
+    if 1e3 <= magnitude < 1e5:
+        return f"{value:.0f}"
+    return f"{value:.3g}"
 
 
 def _series(xs, ys, **style: Any) -> dict[str, Any]:

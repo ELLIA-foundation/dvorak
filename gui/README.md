@@ -65,12 +65,33 @@ Qt so zooming a multi-million-point trace stays responsive.
 when the waveform sits in a session and `Data/plots/` otherwise. Tabs: Overview | Figures | Compose |
 Events | Summary. **Figures** has Metrics (any event scalar as a sequence or
 histogram), Overlay (discharge / ramp / post-collapse for chosen events), and
-Saved figures (the 02–08 pack after a full analysis). **Compose** puts the
-same metric figure for several saved measurements on one canvas (for example
-slew-rate histograms), or the full waveforms overlaid on one axes or stacked
-as one subplot per measurement. Detect events is enough to open Metrics and Overlay.
+Saved figures (the 02–08 pack after a full analysis). **Compose** puts several
+saved measurements on one canvas. Histograms and sequences can be overlaid
+on one axes or stacked as subplots; full waveforms use the same choice.
+A stack of one metric takes a column count, so four histograms and 2 columns
+is a 2×2 grid. Sequence overlays use each event's breakdown time.
+Detect events is enough to open Metrics and Overlay.
 **Legacy ROOT** and **Save PDF** apply to the current figure. Without ROOT,
 Saved figures stays on the PNGs.
+
+### ROOT figures
+
+Figures, Compose, and Frequency response are ROOT canvases drawn by JSROOT.
+Each is laid out for the pane it sits in and redrawn when the pane is
+resized. A stack of subplots too tall for the pane scrolls instead of
+shrinking; the mouse wheel then scrolls, and dragging on an axis zooms.
+
+**Legacy ROOT** opens what the pane shows in `root -l`: the zoom, a dragged
+legend, log axes, and titles or colors changed from the JSROOT menus, at the
+pane's size (scaled down if it does not fit the screen). It is an ordinary
+macro written by ROOT's `SaveAs(".C")` into a temporary `dvorak-legacy-*`
+folder, so it can be edited and run again. **Save PDF** writes the same view.
+ROOT starts with `ROOTSYS` set to the installation Dvorak found, so a
+`.rootrc` that lists `$ROOTSYS/lib` keeps working.
+
+Labels reach ROOT as ASCII TLatex (`#mu`, `^{2}`, `#Delta`, `#ddot{a}`).
+Interactive ROOT on macOS reads strings byte by byte, so raw UTF-8 such as
+an em dash would show up as `‚Äî`.
 
 **Frequency response** plots a sweep (dB ratio and Vpp, log frequency) as a
 ROOT canvas with the same Legacy ROOT button. Sweeps that include
