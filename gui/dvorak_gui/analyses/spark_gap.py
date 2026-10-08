@@ -30,7 +30,9 @@ from lib.waveform import load_waveform
 from ..campaign_import import load_campaign_module
 from ..catalog import CaptureRecord, scan
 from ..kinds import KIND_WAVEFORM
+from ..recipes import RecipeMixin, key_path, path_key
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, Option, get, register
+from ..rootcanvas import RootCanvasRenderer
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.figure_gallery import open_local_path, reveal_in_folder
 from ..widgets.param_form import ParamForm
@@ -474,7 +476,9 @@ def _format_summary(payload: dict[str, Any], out_dir: Path) -> str:
     return "\n".join(lines)
 
 
-class SparkGapWindow(AnalysisWindow):
+class SparkGapWindow(RecipeMixin, AnalysisWindow):
+    recipe_kind = SPARK_GAP_ID
+
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._plot: TracePlot | None = None
         self._form: ParamForm | None = None
@@ -509,16 +513,11 @@ class SparkGapWindow(AnalysisWindow):
         file_menu = self.menuBar().actions()[0].menu()
         assert file_menu is not None
         close_act = next(action for action in file_menu.actions() if action.text() == "Close")
-        save_recipe = QAction("Save recipe…", self)
-        save_recipe.triggered.connect(self._save_recipe)
-        load_recipe = QAction("Load recipe…", self)
-        load_recipe.triggered.connect(self._load_recipe)
         self._reveal_act = QAction("Reveal analysis folder", self)
         self._reveal_act.triggered.connect(self._reveal_output)
         self._pdf_act = QAction("Open analysis PDF", self)
         self._pdf_act.triggered.connect(self._open_pdf)
-        file_menu.insertAction(close_act, save_recipe)
-        file_menu.insertAction(close_act, load_recipe)
+        self._install_recipe_actions(file_menu, close_act)
         file_menu.insertSeparator(close_act)
         file_menu.insertAction(close_act, self._reveal_act)
         file_menu.insertAction(close_act, self._pdf_act)
@@ -579,6 +578,18 @@ class SparkGapWindow(AnalysisWindow):
         self._plot.status_changed.connect(self._on_plot_status)
         self._plot.legacy_root_requested.connect(self._open_legacy_root)
         self._plot.pdf_requested.connect(self._export_pdf)
+        self._plot.generate_root_requested.connect(self._generate_root)
+        self._plot.root_resized.connect(self._on_root_resized)
+        self._root = RootCanvasRenderer(
+            self,
+            self._controller.root,
+            self._export_worker,
+            self._plot.root_view,
+            self.statusBar().showMessage,
+        )
+        self._controller.root.ready.connect(self._root.attach_bundle)
+        if self._controller.root.report:
+            self._root.attach_bundle(self._controller.root.report)
 
         self._explorer = SparkExplorer(self._controller.root)
         self._compose = ComposePane(self._controller.root)
@@ -1000,6 +1011,7 @@ class SparkGapWindow(AnalysisWindow):
             self._controller.root,
             self._export_worker,
             spec,
+            view=self._root_view(),
             on_status=self.statusBar().showMessage,
         )
 
@@ -1023,42 +1035,52 @@ class SparkGapWindow(AnalysisWindow):
             on_status=self.statusBar().showMessage,
         )
 
-    def _save_recipe(self) -> None:
+    def _recipe_state(self) -> dict[str, Any] | None:
         if self._form is None:
-            return
+            return None
         try:
             options = self._form.values()
         except ValueError as exc:
             QMessageBox.warning(self, "Invalid parameters", str(exc))
-            return
-        default = "spark_gap_recipe.json"
+            return None
+        state: dict[str, Any] = {"options": options}
         if self._chosen is not None:
-            default = f"{self._chosen.stem}_recipe.json"
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self, "Save recipe", default, "JSON (*.json)"
-        )
-        if not chosen:
-            return
-        payload = {"analysis": SPARK_GAP_ID, "options": options}
-        Path(chosen).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self.statusBar().showMessage(f"Wrote {chosen}")
+            state["capture"] = path_key(self._chosen.path)
+        return state
 
-    def _load_recipe(self) -> None:
+    def _recipe_default_name(self) -> str:
+        return f"{self._chosen.stem}_recipe" if self._chosen is not None else "spark_gap_recipe"
+
+    def _apply_recipe(self, state: dict[str, Any]) -> None:
         if self._form is None:
             return
-        chosen, _filter = QFileDialog.getOpenFileName(
-            self, "Load recipe", "", "JSON (*.json)"
-        )
-        if not chosen:
-            return
         try:
-            payload = json.loads(Path(chosen).read_text(encoding="utf-8"))
-            options = payload.get("options", payload)
-            self._form.set_values(options)
-        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            self._form.set_values(state.get("options", state))
+        except (TypeError, ValueError) as exc:
             QMessageBox.warning(self, "Could not load recipe", str(exc))
             return
-        self.statusBar().showMessage(f"Loaded {chosen}")
+        capture = state.get("capture")
+        if capture and not self._open_capture_path(key_path(str(capture))):
+            self.statusBar().showMessage("Loaded options; the recipe's capture was not found")
+            return
+        self.statusBar().showMessage("Loaded recipe")
+
+    def _on_root_resized(self) -> None:
+        if self._plot is not None and self._plot.root_active():
+            self._generate_root()
+
+    def _generate_root(self) -> None:
+        spec = self._overview_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        self._root.render(spec, self._plot.root_size(), self._plot.show_root)
+
+    def _root_view(self):
+        """The JSROOT canvas when it is showing, so its edits carry over."""
+        if self._plot is not None and self._plot.root_active():
+            return self._plot.root_view
+        return None
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._load_gen += 1

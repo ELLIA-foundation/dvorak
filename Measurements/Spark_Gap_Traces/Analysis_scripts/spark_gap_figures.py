@@ -202,6 +202,7 @@ def compose_figure_spec(
     include_first: bool,
     layout: str = "stacked",
     cols: int | None = None,
+    normalize: bool = False,
 ) -> dict[str, Any]:
     """Histograms or sequences for several measurements.
 
@@ -220,7 +221,7 @@ def compose_figure_spec(
     rows_src = rows_src[:limit]
     if mode == "histogram":
         panels = _compose_histogram_panels(
-            rows_src, metrics, include_first, stacked=stacked
+            rows_src, metrics, include_first, stacked=stacked, normalize=normalize
         )
     else:
         panels = _compose_sequence_panels(
@@ -232,6 +233,9 @@ def compose_figure_spec(
         columns = max(1, min(int(cols or 1), len(rows_src) or 1))
     elif stacked:
         columns = max(1, len(rows_src)) if rows_src else 1
+    elif multi:
+        # Overlay with several metrics: one axes per metric, laid out in a grid.
+        columns = max(1, min(int(cols or 1), len(panels)))
     else:
         columns = 1
     n_rows = max(1, math.ceil(len(panels) / columns))
@@ -287,6 +291,7 @@ def _compose_histogram_panels(
     include_first: bool,
     *,
     stacked: bool,
+    normalize: bool = False,
 ) -> list[dict[str, Any]]:
     fields = {field["name"]: field for field in PLOT_METRICS}
     panels: list[dict[str, Any]] = []
@@ -335,6 +340,7 @@ def _compose_histogram_panels(
                     "mean": mean,
                     "median": median,
                     "color": color,
+                    "normalize": normalize,
                     "label": f"{label}  n={len(arr)}, mean {_fmt(mean)} {unit}",
                 }
             )
@@ -342,11 +348,11 @@ def _compose_histogram_panels(
             {
                 "title": str(field["label"]),
                 "x_title": f"{field['label']} ({unit})",
-                "y_title": "Count",
+                "y_title": "Count / max" if normalize else "Count",
                 "xmin": lo,
                 "xmax": hi,
                 "ymin": 0.0,
-                "ymax": ymax,
+                "ymax": 1.05 if normalize else ymax,
                 "hists": hists,
                 "legend_corner": "left",
             }

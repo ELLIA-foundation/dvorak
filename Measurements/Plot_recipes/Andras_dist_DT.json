@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "kind": "x123_spectra",
+  "selection": [
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_4.5m_tube11_A1shield.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/5.6m_covered_t5_high_stat.mca"
+  ],
+  "y_mode": "counts",
+  "log_y": false,
+  "smooth": true,
+  "window_channels": 3,
+  "roi": {
+    "on": false,
+    "lo": 12.0,
+    "hi": 20.0
+  },
+  "cursors": {
+    "on": false,
+    "a": 0.0,
+    "b": 0.0
+  },
+  "u_lines": false,
+  "material_lines": false,
+  "common_lines": false,
+  "difference": null,
+  "view": "selection",
+  "band": "std",
+  "groups": [],
+  "legend_fields": [
+    "dead_time_pct",
+    "real_time_s"
+  ],
+  "legend_names": {
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield.mca": "1.1 Meters",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield.mca": "2.2 Meters",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_4.5m_tube11_A1shield.mca": "4.5 Meters",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/5.6m_covered_t5_high_stat.mca": "5.6 Meters"
+  },
+  "range": null
+}

@@ -268,6 +268,10 @@ class RootClient:
             request["size"] = [int(size[0]), int(size[1])]
         return self._request(request, timeout)
 
+    def read_hists(self, path: str, *, match: str = "", timeout: float = 60) -> dict:
+        """1D histograms (edges, counts, errors) and scalar parameters in ``path``."""
+        return self._request({"op": "read_hists", "path": str(path), "match": match}, timeout)
+
     def _request(self, request: dict, timeout: float, wanted=None) -> dict:
         self.wait()
         if not self.available:

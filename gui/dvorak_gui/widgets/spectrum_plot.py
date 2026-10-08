@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,10 @@ from PySide6.QtWidgets import (
 from dvorak_root.text import root_text
 
 from ..campaign_import import load_spectrum_module
+from ..jsrootview import JsRootView
+from .capture_metadata import field_label, format_value
+from .legend_names import LegendNamesDialog
+from ..recipes import key_path, path_key
 
 _COLORS = (
     "#1f77b4",
@@ -77,6 +81,7 @@ class SpectrumTrace:
     phase: str | None
     offset_kev: float
     slope_kev: float
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -114,6 +119,7 @@ def _copy_trace(trace: SpectrumTrace) -> SpectrumTrace:
         phase=trace.phase,
         offset_kev=trace.offset_kev,
         slope_kev=trace.slope_kev,
+        meta=dict(trace.meta),
     )
 
 
@@ -179,6 +185,8 @@ class SpectrumPlot(QWidget):
     status_changed = Signal(str)
     legacy_root_requested = Signal()
     pdf_requested = Signal()
+    generate_root_requested = Signal()
+    root_resized = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -187,6 +195,8 @@ class SpectrumPlot(QWidget):
         self._next_group_id = 0
         self._groups_view = False
         self._empty_message = _EMPTY
+        self._legend_keys: list[str] = []
+        self._names: dict[str, str] = {}
         self._syncing = False
         self._math = load_spectrum_module("spectrum")
         self._lines = load_spectrum_module("lines")
@@ -198,6 +208,64 @@ class SpectrumPlot(QWidget):
         self._refresh_reference_combo()
         self._sync_cps()
         self._redraw()
+
+    def set_legend_fields(self, keys: list[str]) -> None:
+        """Metadata fields appended to every trace's legend entry."""
+        self._legend_keys = list(keys)
+        self._redraw()
+
+    def _base(self, trace: SpectrumTrace) -> str:
+        return self._names.get(path_key(trace.path), trace.label)
+
+    def edit_legend_names(self) -> None:
+        unique: dict[str, SpectrumTrace] = {}
+        for trace in self._traces:
+            unique.setdefault(path_key(trace.path), trace)
+        for group in self._groups:
+            for trace in group.traces:
+                unique.setdefault(path_key(trace.path), trace)
+        if not unique:
+            self.status_changed.emit("Select a spectrum first")
+            return
+        rows = [
+            (key, trace.label, self._names.get(key, ""))
+            for key, trace in unique.items()
+        ]
+        suffix = ", ".join(field_label(k) for k in self._legend_keys)
+        dialog = LegendNamesDialog(rows, suffix, self)
+        if dialog.exec():
+            self._names = dialog.names()
+            self._refresh_reference_combo()
+            self._redraw()
+
+    def legend_fields(self) -> list[str]:
+        return list(self._legend_keys)
+
+    def _decorate(self, label: str, meta: dict[str, Any]) -> str:
+        parts = []
+        for key in self._legend_keys:
+            value = meta.get(key)
+            if value is None or value == "":
+                continue
+            parts.append(f"{field_label(key)} {format_value(key, value)}")
+        return f"{label} ({', '.join(parts)})" if parts else label
+
+    def root_active(self) -> bool:
+        return self._stack.currentWidget() is self.root_view
+
+    def root_size(self) -> tuple[int, int]:
+        size = self._stack.size()
+        return max(1, size.width()), max(1, size.height())
+
+    def show_root(self, payload: str, height: int) -> None:
+        """Show a ROOT-rendered canvas in place of the live plot."""
+        self.root_view.draw(payload, height)
+        self._stack.setCurrentWidget(self.root_view)
+        self._root_btn.setText("Live plot")
+
+    def show_live(self) -> None:
+        if self.root_active():
+            self._redraw()
 
     def show_message(self, text: str) -> None:
         self._traces = []
@@ -266,7 +334,7 @@ class SpectrumPlot(QWidget):
             "vlines": self._marker_lines(),
             "vspans": [],
             "notes": [],
-            "legend": len(series) > 1,
+            "legend": len(series) > 1 or bool(self._legend_keys),
         }
         if self._roi.isChecked():
             lo, hi = self._region.getRegion()
@@ -291,6 +359,7 @@ class SpectrumPlot(QWidget):
         }
 
     def _set_export_enabled(self, enabled: bool) -> None:
+        self._root_btn.setEnabled(enabled)
         self._legacy_btn.setEnabled(enabled)
         self._pdf_btn.setEnabled(enabled)
 
@@ -347,6 +416,12 @@ class SpectrumPlot(QWidget):
 
         reset_btn = QPushButton("Reset view")
         reset_btn.clicked.connect(self.reset_view)
+        self._root_btn = QPushButton("Generate ROOT")
+        self._root_btn.setToolTip(
+            "Render this view with ROOT in place of the live plot. "
+            "Legacy ROOT and Save PDF then use that canvas."
+        )
+        self._root_btn.clicked.connect(self._on_root_clicked)
         self._legacy_btn = QPushButton("Legacy ROOT")
         self._legacy_btn.setToolTip(
             "Open the current view in the interactive ROOT GUI (root -l)"
@@ -365,6 +440,7 @@ class SpectrumPlot(QWidget):
         row1.addWidget(self._window)
         row1.addWidget(self._window_kev)
         row1.addStretch(1)
+        row1.addWidget(self._root_btn)
         row1.addWidget(self._legacy_btn)
         row1.addWidget(self._pdf_btn)
         row1.addWidget(reset_btn)
@@ -422,6 +498,11 @@ class SpectrumPlot(QWidget):
         row3.addSpacing(12)
         row3.addWidget(QLabel("Band"))
         row3.addWidget(self._band_metric)
+        self._names_btn = QPushButton("Legend names…")
+        self._names_btn.setToolTip("Set the base legend name of each trace")
+        self._names_btn.clicked.connect(self.edit_legend_names)
+        row3.addSpacing(12)
+        row3.addWidget(self._names_btn)
         row3.addStretch(1)
 
         self._group_rows = QWidget()
@@ -494,6 +575,9 @@ class SpectrumPlot(QWidget):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._message)
         self._stack.addWidget(self._plot)
+        self.root_view = JsRootView(parent=self)
+        self.root_view.resized.connect(lambda _w, _h: self.root_resized.emit())
+        self._stack.addWidget(self.root_view)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -504,6 +588,134 @@ class SpectrumPlot(QWidget):
         layout.addWidget(self._hint)
         layout.addWidget(self._stack, stretch=1)
         self._sync_group_buttons()
+
+    def recipe_state(self) -> dict[str, Any]:
+        """Everything needed to rebuild this plot from the spectra on disk."""
+        lo, hi = self._region.getRegion()
+        diff = self._diff.currentData()
+        if isinstance(diff, str) and diff.startswith("group:"):
+            gid = int(diff.split(":", 1)[1])
+            index = next((i for i, g in enumerate(self._groups) if g.group_id == gid), None)
+            diff = None if index is None else f"group:{index}"
+        elif diff is not None:
+            diff = path_key(diff)
+        auto = self._vb.autoRangeEnabled()
+        (x0, x1), (y0, y1) = self._vb.viewRange()
+        return {
+            "selection": [path_key(t.path) for t in self._traces],
+            "y_mode": self._y_mode.currentData(),
+            "log_y": self._log.isChecked(),
+            "smooth": self._smooth.isChecked(),
+            "window_channels": self._window.value(),
+            "roi": {"on": self._roi.isChecked(), "lo": float(lo), "hi": float(hi)},
+            "cursors": {
+                "on": self._cursors.isChecked(),
+                "a": float(self._cursor_a.value()),
+                "b": float(self._cursor_b.value()),
+            },
+            "u_lines": self._u_lines.isChecked(),
+            "material_lines": self._material_lines.isChecked(),
+            "common_lines": self._k_lines.isChecked(),
+            "difference": diff,
+            "view": "groups" if self._groups_view else "selection",
+            "band": self._band_metric.currentData(),
+            "groups": [
+                {
+                    "name": g.name,
+                    "kind": g.kind,
+                    "members": [path_key(t.path) for t in g.traces],
+                    "show_members": g.show_members,
+                    "color": g.color,
+                }
+                for g in self._groups
+            ],
+            "legend_fields": list(self._legend_keys),
+            "legend_names": dict(self._names),
+            "range": None
+            if all(auto)
+            else {"x": [float(x0), float(x1)], "y": [float(y0), float(y1)]},
+        }
+
+    def apply_recipe_state(
+        self, state: dict[str, Any], traces: dict[str, SpectrumTrace]
+    ) -> None:
+        """Restore a recipe. ``traces`` maps each recipe path key to its data."""
+
+        def pick(widget, value) -> None:
+            index = widget.findData(value)
+            if index >= 0:
+                widget.setCurrentIndex(index)
+
+        self._syncing = True
+        try:
+            self._traces = [traces[k] for k in state.get("selection") or [] if k in traces]
+            self._groups = []
+            for g in state.get("groups") or []:
+                members = [_copy_trace(traces[k]) for k in g.get("members") or [] if k in traces]
+                if not members:
+                    continue
+                self._next_group_id += 1
+                self._groups.append(
+                    SpectrumGroup(
+                        group_id=self._next_group_id,
+                        name=str(g.get("name") or "Group"),
+                        kind="mean" if g.get("kind") == "mean" else "sum",
+                        traces=members,
+                        show_members=bool(g.get("show_members")),
+                        color=str(g.get("color") or _COLORS[0]),
+                    )
+                )
+            self._legend_keys = list(state.get("legend_fields") or [])
+            self._names = dict(state.get("legend_names") or {})
+            self._groups_view = state.get("view") == "groups" and bool(self._groups)
+            self._view_groups.setChecked(self._groups_view)
+            self._view_selection.setChecked(not self._groups_view)
+            pick(self._y_mode, state.get("y_mode"))
+            pick(self._band_metric, state.get("band"))
+            self._log.setChecked(bool(state.get("log_y")))
+            self._smooth.setChecked(bool(state.get("smooth")))
+            self._window.setValue(int(state.get("window_channels") or 5))
+            self._window_kev.setValue(self._window.value() * self._slope())
+            self._u_lines.setChecked(bool(state.get("u_lines")))
+            self._material_lines.setChecked(bool(state.get("material_lines")))
+            self._k_lines.setChecked(bool(state.get("common_lines")))
+            roi = state.get("roi") or {}
+            cur = state.get("cursors") or {}
+            for box, on in ((self._roi, roi.get("on")), (self._cursors, cur.get("on"))):
+                box.blockSignals(True)
+                box.setChecked(bool(on))
+                box.blockSignals(False)
+            if "lo" in roi:
+                self._region.setRegion((roi["lo"], roi["hi"]))
+            if "a" in cur:
+                self._cursor_a.setValue(cur["a"])
+                self._cursor_b.setValue(cur["b"])
+            self._region.setVisible(self._roi.isChecked())
+            self._cursor_a.setVisible(self._cursors.isChecked())
+            self._cursor_b.setVisible(self._cursors.isChecked())
+        finally:
+            self._syncing = False
+        self._rebuild_group_rows()
+        self._sync_group_buttons()
+        self._refresh_reference_combo()
+        diff = state.get("difference")
+        if isinstance(diff, str) and diff.startswith("group:"):
+            index = int(diff.split(":", 1)[1])
+            if 0 <= index < len(self._groups):
+                pick(self._diff, f"group:{self._groups[index].group_id}")
+        elif diff:
+            pick(self._diff, str(key_path(diff)))
+        self._sync_cps()
+        self._redraw()
+        view = state.get("range")
+        if view and self._stack.currentWidget() is self._plot:
+            self._vb.setRange(xRange=view["x"], yRange=view["y"], padding=0)
+
+    def _on_root_clicked(self) -> None:
+        if self.root_active():
+            self._redraw()
+            return
+        self.generate_root_requested.emit()
 
     def _on_window_channels(self, value: int) -> None:
         if self._syncing:
@@ -568,7 +780,7 @@ class SpectrumPlot(QWidget):
                 self._diff.addItem(group.name, f"group:{group.group_id}")
         else:
             for trace in self._traces:
-                self._diff.addItem(trace.label, str(trace.path))
+                self._diff.addItem(self._base(trace), str(trace.path))
         index = 0
         if current is not None:
             found = self._diff.findData(current)
@@ -651,7 +863,7 @@ class SpectrumPlot(QWidget):
             curve = self._trace_curve(
                 trace,
                 key=str(trace.path),
-                label=trace.label,
+                label=self._decorate(self._base(trace), trace.meta),
                 color=_COLORS[index % len(_COLORS)],
             )
             if curve is not None:
@@ -665,6 +877,15 @@ class SpectrumPlot(QWidget):
                 return None
             total += float(trace.live_time_s)
         return total
+
+    def _summed_meta(self, traces: list[SpectrumTrace]) -> dict[str, Any]:
+        """Fields that add across a sum; the rest have no single value."""
+        meta: dict[str, Any] = {}
+        for key in ("live_time_s", "real_time_s", "fast_count", "slow_count", "gp_count"):
+            values = [trace.meta.get(key) for trace in traces]
+            if all(isinstance(v, (int, float)) for v in values):
+                meta[key] = sum(values)
+        return meta
 
     def _sum_curve(self, group: SpectrumGroup) -> _PlotCurve | None:
         if not group.traces:
@@ -684,11 +905,12 @@ class SpectrumPlot(QWidget):
             phase=first.phase,
             offset_kev=first.offset_kev,
             slope_kev=first.slope_kev,
+            meta=self._summed_meta(group.traces),
         )
         curve = self._trace_curve(
             synthetic,
             key=f"group:{group.group_id}",
-            label=f"{group.name} (n={len(group.traces)})",
+            label=self._decorate(f"{group.name} (n={len(group.traces)})", synthetic.meta),
             color=group.color,
             width=2.0,
         )
@@ -731,7 +953,7 @@ class SpectrumPlot(QWidget):
             curve = self._trace_curve(
                 trace,
                 key=f"member:{group.group_id}:{trace.path}",
-                label=trace.label,
+                label=self._decorate(self._base(trace), trace.meta),
                 color=group.color,
                 width=1.0,
                 primary=False,
@@ -1178,6 +1400,7 @@ class SpectrumPlot(QWidget):
             self._message.setText(self._empty_text())
             self._hint.clear()
             self._stack.setCurrentWidget(self._message)
+            self._root_btn.setText("Generate ROOT")
             self._set_export_enabled(False)
             self.status_changed.emit("")
             return
@@ -1194,6 +1417,7 @@ class SpectrumPlot(QWidget):
             or len(curves) > 1
             or any(curve.spread is not None for curve in curves)
             or any(curve.label.startswith("Δ ") for curve in curves)
+            or bool(self._legend_keys)
         )
         legend = self._plot.plotItem.legend
         if show_legend:
@@ -1226,6 +1450,7 @@ class SpectrumPlot(QWidget):
 
         self._draw_lines()
         self._stack.setCurrentWidget(self._plot)
+        self._root_btn.setText("Generate ROOT")
         self._set_export_enabled(True)
         self._update_readout()
 

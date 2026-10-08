@@ -554,7 +554,7 @@ class ComposePane(QWidget):
         self._add_set_btn = QPushButton("Add set")
         self._add_set_btn.clicked.connect(self._add_set)
         self._add_set_btn.setEnabled(False)
-        self._add_set_btn.setToolTip("Command-click two or more analyzed measurements")
+        self._add_set_btn.setToolTip("Select one or more analyzed measurements")
 
         self._set_rows = QWidget()
         self._set_rows_layout = QVBoxLayout(self._set_rows)
@@ -566,6 +566,12 @@ class ComposePane(QWidget):
         self._set_scroll.setWidget(self._set_rows)
         self._set_scroll.setVisible(False)
         self._set_scroll.setMaximumHeight(140)
+
+        self._normalize = QCheckBox("Normalize to max")
+        self._normalize.setToolTip(
+            "Scale each histogram so its tallest bin is 1 (histogram overlays and sets)"
+        )
+        self._normalize.toggled.connect(self._redraw)
 
         self._columns_label = QLabel("Columns")
         self._columns = QSpinBox()
@@ -614,6 +620,7 @@ class ComposePane(QWidget):
         controls.addWidget(self._sets_layout)
         controls.addWidget(self._add_set_btn)
         controls.addWidget(self._set_scroll)
+        controls.addWidget(self._normalize)
         controls.addWidget(self._columns_label)
         controls.addWidget(self._columns)
         controls.addWidget(self._population_label)
@@ -701,7 +708,13 @@ class ComposePane(QWidget):
         ):
             widget.setEnabled(not wave)
         multi_metric = (not wave) and len(self._checked_metric_items()) > 1
-        grid = self._stack.isChecked() and not multi_metric
+        sets = self._sets_layout.isChecked()
+        grid = (self._stack.isChecked() and not multi_metric) or (
+            (sets or self._overlay_layout.isChecked()) and multi_metric
+        )
+        if sets:
+            grid = len(self._checked_metric_items()) > 1
+        self._normalize.setEnabled(self._hist.isChecked() and not wave)
         self._columns_label.setEnabled(grid)
         self._columns.setEnabled(grid)
         self._all_btn.setText("All" if wave else "All analyzed")
@@ -861,11 +874,11 @@ class ComposePane(QWidget):
 
     def _sync_add_set_button(self) -> None:
         count = len(self._analysed_catalogue())
-        self._add_set_btn.setEnabled(count >= 2)
+        self._add_set_btn.setEnabled(count >= 1)
         self._add_set_btn.setToolTip(
-            "Pin the selected measurements as one pooled histogram"
-            if count >= 2
-            else "Command-click two or more analyzed measurements"
+            "Pin the selected measurement(s) as one set"
+            if count >= 1
+            else "Select one or more analyzed measurements"
         )
 
     def _analysed_catalogue(self) -> list[Any]:
@@ -900,7 +913,7 @@ class ComposePane(QWidget):
 
     def _add_set(self) -> None:
         records = self._analysed_catalogue()
-        if len(records) < 2:
+        if len(records) < 1:
             return
         self._next_set_id += 1
         self._sets.append(
@@ -984,7 +997,7 @@ class ComposePane(QWidget):
     def _redraw_sets(self) -> None:
         if not self._sets:
             self._note.setText("")
-            self._canvas.clear("Command-click measurements, then Add set.")
+            self._canvas.clear("Select measurements, then Add set.")
             return
         names = [item.data(Qt.ItemDataRole.UserRole) for item in self._checked_metric_items()]
         if not names:
@@ -1027,6 +1040,8 @@ class ComposePane(QWidget):
             mode="histogram",
             include_first=self._all.isChecked(),
             layout="overlay",
+            cols=int(self._columns.value()),
+            normalize=self._normalize.isChecked(),
         )
         if not _same_scope(detections):
             spec["footer"] = ""
@@ -1092,7 +1107,8 @@ class ComposePane(QWidget):
             mode="histogram" if self._hist.isChecked() else "sequence",
             include_first=self._all.isChecked(),
             layout="stacked" if stacked else "overlay",
-            cols=int(self._columns.value()) if stacked and not multi else None,
+            cols=int(self._columns.value()) if stacked != multi else None,
+            normalize=self._normalize.isChecked() and self._hist.isChecked(),
         )
         self._canvas.set_spec(spec)
 

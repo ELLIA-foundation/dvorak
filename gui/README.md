@@ -76,7 +76,7 @@ A stack of one metric takes a column count, so four histograms and 2 columns
 is a 2×2 grid. Sequence overlays use each event's breakdown time.
 Shift-click or Command-click pools the selected captures' saved events into
 the Metrics histograms (the opened capture's live detection counts too), and
-Compose → Sets pins each such selection as one pooled histogram. Detect
+Compose → Sets pins the selected measurements (one or more) as one histogram. Detect
 events is enough to open Metrics and Overlay.
 **Legacy ROOT** and **Save PDF** apply to the current figure. Without ROOT,
 Saved figures stays on the PNGs.
@@ -136,6 +136,22 @@ those groups; **Split by phase** builds one group per pre, post, and
 unlabeled set.
 **File → Export plot…** writes a PNG of the current view. **Legacy ROOT** and
 **Save PDF…** send that same view to ROOT; the live plot stays in Qt.
+
+**X-123 + Pixel Detector Overlay** puts X-123 spectra on the left y axis and
+ADVACAM pixel-detector spectra on the right, sharing the energy axis. Pixel
+spectra are read, never produced: the list comes from `opixe-core list` and
+the curves from each measurement's `derived.root` (`hClusterEnergy`, or a
+region's `Regions/hClusterEnergy_N`). Clustering, calibration and deriving
+stay in Pixet; a measurement OPIXE reports as stale is shown in amber and
+plotted as last derived. The OPIXE data folder defaults to
+`$OPIXE_DATA_DIR`, else `$PIXET_DIR/Data/OPIXE Data`, else a `Pixet` checkout
+beside this repo (**Folder…** switches it); `opixe-core` is found through
+`$OPIXE_CORE`, `<Pixet>/OPIXE/bin`, or PATH. Y modes put both detectors in
+the same units (counts / keV / s by default, which accounts for the pixel
+spectrum's variable-width bins), with separate log scales per axis. The X-123
+plot's tools carry over: smoothing, ROI counts per spectrum, cursors, line
+markers, metadata legend fields, legend names, recipes, Generate ROOT, Legacy
+ROOT, and Save PDF.
 
 Measurement tools stay disabled. They will run on lab computers (Windows,
 master branch): instrument connect plus the existing campaign / tools CLIs,

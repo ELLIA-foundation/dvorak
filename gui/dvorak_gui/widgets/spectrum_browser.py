@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, Qt, Signal
 from shiboken6 import isValid
 from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
@@ -137,6 +137,9 @@ class SpectrumBrowser(QWidget):
         """Copy MCA files into an existing session's Data folder."""
         self._import(campaign=campaign, sources=sources)
 
+    def clear_selection(self) -> None:
+        self._tree.clearSelection()
+
     def focus_paths(self, paths: list[Path]) -> None:
         wanted = {path.resolve() for path in paths}
         if not wanted:
@@ -161,7 +164,8 @@ class SpectrumBrowser(QWidget):
                         if first is None:
                             first = child
             if first is not None:
-                self._tree.setCurrentItem(first)
+                # NoUpdate: making it current must not drop the rest of the selection.
+                self._tree.setCurrentItem(first, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
                 self._tree.scrollToItem(first)
         finally:
             self._tree.blockSignals(False)

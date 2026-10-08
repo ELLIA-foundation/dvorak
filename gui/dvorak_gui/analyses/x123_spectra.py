@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -23,6 +21,9 @@ from lib.spectrum import SpectrumCapture, load_calibration, load_spectrum_file
 
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
 from ..rootexport import open_in_legacy_root, save_pdf
+from ..widgets.capture_metadata import CaptureMetadataPanel, flatten_metadata
+from ..rootcanvas import RootCanvasRenderer
+from ..recipes import RecipeMixin, key_path, path_key
 from ..widgets.spectrum_browser import SpectrumBrowser
 from ..widgets.spectrum_plot import SpectrumPlot, SpectrumTrace
 from ..window import AnalysisWindow
@@ -52,13 +53,30 @@ def _load_files(paths: list[str], campaigns: list[str]) -> dict[str, Any]:
     return {"rows": rows, "errors": errors}
 
 
-class X123SpectraWindow(AnalysisWindow):
+def _state_keys(state: dict[str, Any]) -> list[str]:
+    """Every spectrum a recipe needs: the selection first, then group members."""
+    keys: list[str] = list(state.get("selection") or [])
+    for group in state.get("groups") or []:
+        for key in group.get("members") or []:
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+class X123SpectraWindow(RecipeMixin, AnalysisWindow):
+    recipe_kind = X123_SPECTRA_ID
+
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._worker = WorkerHandle()
         self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._captures: dict[Path, SpectrumCapture] = {}
+        self._pending_recipe: dict[str, Any] | None = None
+        self._recipe_dir: Path | None = None
         super().__init__(spec, controller)
+        self._controller.root.ready.connect(self._on_root_ready)
+        if self._controller.root.report:
+            self._on_root_ready(self._controller.root.report)
         self.resize(1280, 820)
         self._show_idle()
 
@@ -85,6 +103,8 @@ class X123SpectraWindow(AnalysisWindow):
         legacy_act.triggered.connect(self._open_legacy_root)
         pdf_act = QAction("Export PDF…", self)
         pdf_act.triggered.connect(self._export_pdf)
+        self._install_recipe_actions(file_menu, close_act)
+        file_menu.insertSeparator(close_act)
         file_menu.insertAction(close_act, export_act)
         file_menu.insertAction(close_act, pdf_act)
         file_menu.insertAction(close_act, legacy_act)
@@ -111,11 +131,19 @@ class X123SpectraWindow(AnalysisWindow):
         self._plot.status_changed.connect(self.statusBar().showMessage)
         self._plot.legacy_root_requested.connect(self._open_legacy_root)
         self._plot.pdf_requested.connect(self._export_pdf)
+        self._plot.generate_root_requested.connect(self._generate_root)
+        self._plot.root_resized.connect(self._on_root_resized)
+        self._root = RootCanvasRenderer(
+            self,
+            self._controller.root,
+            self._export_worker,
+            self._plot.root_view,
+            self.statusBar().showMessage,
+        )
 
         heading = QLabel("Capture")
-        self._detail = QPlainTextEdit()
-        self._detail.setReadOnly(True)
-        self._detail.setPlaceholderText("Select a spectrum.")
+        self._detail = CaptureMetadataPanel(legend=True)
+        self._detail.legend_fields_changed.connect(self._plot.set_legend_fields)
         meta = QWidget()
         meta_layout = QVBoxLayout(meta)
         meta_layout.addWidget(heading)
@@ -177,8 +205,13 @@ class X123SpectraWindow(AnalysisWindow):
         paths = self._files_to_plot()
         if not paths:
             return
+        extra = []
+        if self._pending_recipe is not None:
+            extra = [
+                key_path(k) for k in _state_keys(self._pending_recipe) if key_path(k) not in paths
+            ]
         campaigns = []
-        for path in paths:
+        for path in paths + extra:
             campaign = self._browser.campaign_for(path) or path.parent.name
             campaigns.append(campaign)
         self._load_gen += 1
@@ -186,7 +219,7 @@ class X123SpectraWindow(AnalysisWindow):
         self.statusBar().showMessage("Loading…")
         self._worker.start(
             _load_files,
-            [str(path) for path in paths],
+            [str(path) for path in paths + extra],
             campaigns,
             on_finished=lambda payload, generation=gen: self._on_loaded(generation, payload),
             on_failed=lambda message, generation=gen: self._on_failed(generation, message),
@@ -203,6 +236,8 @@ class X123SpectraWindow(AnalysisWindow):
             self._plot.show_message("Could not load the selected spectra.")
             return
         self._captures = {row["path"]: row["capture"] for row in rows}
+        wanted = set(self._files_to_plot())
+        recipe, self._pending_recipe = self._pending_recipe, None
         traces = [
             SpectrumTrace(
                 path=row["path"],
@@ -214,10 +249,20 @@ class X123SpectraWindow(AnalysisWindow):
                 phase=row["capture"].phase,
                 offset_kev=row["capture"].calibration.offset_kev,
                 slope_kev=row["capture"].calibration.slope_kev_per_channel,
+                meta=flatten_metadata(row["capture"].metadata_dict()),
             )
             for row in rows
         ]
-        self._plot.set_traces(traces)
+        if recipe is not None:
+            by_key = {path_key(t.path): t for t in traces}
+            self._plot.set_traces([t for t in traces if t.path in wanted])
+            self._plot.apply_recipe_state(recipe, by_key)
+            self._detail.set_legend_keys(self._plot.legend_fields())
+            missing = [k for k in _state_keys(recipe) if k not in by_key]
+            if missing:
+                self.statusBar().showMessage(f"Recipe: {len(missing)} spectrum file(s) not found")
+        else:
+            self._plot.set_traces(traces)
         current = self._browser.current_file()
         self._show_metadata(current if current in self._captures else rows[0]["path"])
 
@@ -237,16 +282,60 @@ class X123SpectraWindow(AnalysisWindow):
             return
         capture = self._captures.get(path)
         if capture is None:
-            self._detail.setPlainText(str(path))
+            self._detail.show_metadata(None, str(path))
             return
-        payload = capture.metadata_dict()
-        payload["path"] = str(path)
-        self._detail.setPlainText(json.dumps(payload, indent=2, default=str))
+        self._detail.show_metadata(capture.metadata_dict(), str(path))
+
+    def _recipe_state(self) -> dict[str, Any] | None:
+        state = self._plot.recipe_state()
+        if not state["selection"] and not state["groups"]:
+            QMessageBox.information(self, self.windowTitle(), "Select a spectrum first.")
+            return None
+        return state
+
+    def _recipe_default_name(self) -> str:
+        paths = self._files_to_plot()
+        return paths[0].stem if paths else "spectrum"
+
+    def _apply_recipe(self, state: dict[str, Any]) -> None:
+        selection = [key_path(k) for k in state.get("selection") or []]
+        existing = [p for p in selection if p.is_file()]
+        self._pending_recipe = state
+        if existing:
+            self._browser.focus_paths(existing)
+        else:
+            self._reload_for_recipe()
+
+    def _reload_for_recipe(self) -> None:
+        # No selectable spectra (a groups-only recipe): load from the current row.
+        if self._files_to_plot():
+            self._reload()
+        else:
+            self._pending_recipe = None
+            self.statusBar().showMessage("Recipe has no spectra that exist on disk")
 
     def _publication_spec(self) -> dict | None:
         paths = self._files_to_plot()
         name = paths[0].stem if paths else "spectrum"
         return self._plot.publication_spec(name)
+
+    def _root_view(self):
+        """The JSROOT canvas when it is showing, so its edits carry over."""
+        return self._plot.root_view if self._plot.root_active() else None
+
+    def _on_root_ready(self, report: dict) -> None:
+        self._root.attach_bundle(report)
+
+    def _on_root_resized(self) -> None:
+        if self._plot.root_active():
+            self._generate_root()
+
+    def _generate_root(self) -> None:
+        spec = self._publication_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Select a spectrum first.")
+            return
+        self._root.render(spec, self._plot.root_size(), self._plot.show_root)
 
     def _open_legacy_root(self) -> None:
         spec = self._publication_spec()
@@ -258,6 +347,7 @@ class X123SpectraWindow(AnalysisWindow):
             self._controller.root,
             self._export_worker,
             spec,
+            view=self._root_view(),
             on_status=self.statusBar().showMessage,
         )
 
@@ -273,6 +363,7 @@ class X123SpectraWindow(AnalysisWindow):
             self._export_worker,
             spec,
             default,
+            view=self._root_view(),
             on_status=self.statusBar().showMessage,
         )
 

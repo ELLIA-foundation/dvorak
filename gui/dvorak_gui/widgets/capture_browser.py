@@ -97,6 +97,15 @@ class CaptureBrowser(QWidget):
                 self._collect_selected(parent, records, seen)
         return records
 
+    def open_path(self, path: Path) -> bool:
+        """Choose the accepted capture at ``path``, as a double-click would."""
+        wanted = Path(path).resolve()
+        for record in self._records:
+            if record.path.resolve() == wanted and self._is_accepted(record):
+                self.capture_chosen.emit(record)
+                return True
+        return False
+
     def refresh(self) -> None:
         query = self._search.text()
         self._records = scan(self._controller.resolved_data_root())

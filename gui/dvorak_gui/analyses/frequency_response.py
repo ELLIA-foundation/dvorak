@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -25,17 +24,21 @@ from ..campaign_import import load_campaign_module
 from ..catalog import CaptureRecord
 from ..jsrootview import JsRootView
 from ..kinds import KIND_TABLE
+from ..recipes import RecipeMixin, key_path, path_key
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.figure_gallery import FigureGallery
-from ..window import AnalysisWindow, _format_record
+from ..widgets.capture_metadata import CaptureMetadataPanel
+from ..window import AnalysisWindow
 from ..workers import WorkerHandle
 
 FREQ_ID = "frequency_response"
 _plot = load_campaign_module(CAMPAIGN_FREQUENCY_RESPONSES, "frequency_plot")
 
 
-class FrequencyWindow(AnalysisWindow):
+class FrequencyWindow(RecipeMixin, AnalysisWindow):
+    recipe_kind = FREQ_ID
+
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._view: JsRootView | None = None
         self._gallery: FigureGallery | None = None
@@ -57,6 +60,8 @@ class FrequencyWindow(AnalysisWindow):
         legacy_act.triggered.connect(self._open_legacy_root)
         pdf_act = QAction("Export PDF…", self)
         pdf_act.triggered.connect(self._export_pdf)
+        self._install_recipe_actions(file_menu, close_act)
+        file_menu.insertSeparator(close_act)
         file_menu.insertAction(close_act, pdf_act)
         file_menu.insertAction(close_act, legacy_act)
 
@@ -85,14 +90,25 @@ class FrequencyWindow(AnalysisWindow):
         self._gallery.hide()
 
         heading = QLabel("Capture")
-        self._detail = QPlainTextEdit()
-        self._detail.setReadOnly(True)
-        self._detail.setPlaceholderText("Select a frequency-response table.")
+        self._detail = CaptureMetadataPanel()
         meta = QWidget()
         meta_layout = QVBoxLayout(meta)
         meta_layout.addWidget(heading)
         meta_layout.addWidget(self._detail, stretch=1)
         return [plot, meta]
+
+    def _recipe_state(self) -> dict | None:
+        if self._chosen is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a table first.")
+            return None
+        return {"capture": path_key(self._chosen.path)}
+
+    def _recipe_default_name(self) -> str:
+        return self._chosen.stem if self._chosen is not None else "frequency_response"
+
+    def _apply_recipe(self, state: dict) -> None:
+        if not self._open_capture_path(key_path(str(state.get("capture") or ""))):
+            self.statusBar().showMessage("Recipe's capture was not found in the catalogue")
 
     def _on_root_ready(self, report: dict) -> None:
         if self._view is None:
@@ -105,7 +121,7 @@ class FrequencyWindow(AnalysisWindow):
     def _handle_opened(self, record: CaptureRecord) -> None:
         self._meta = dict(record.metadata)
         rows = _rows_for(record)
-        self._detail.setPlainText(_format_record(record, accepted=True))
+        self._detail.show_record(record)
         if not rows:
             self._spec_payload = None
             self.statusBar().showMessage("This table has no frequency rows.")

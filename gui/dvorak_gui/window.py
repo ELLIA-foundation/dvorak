@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -10,7 +9,6 @@ from PySide6.QtGui import QAction, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
-    QPlainTextEdit,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -20,6 +18,7 @@ from . import APP_NAME
 from .catalog import CaptureRecord
 from .registry import AnalysisSpec
 from .widgets import CaptureBrowser
+from .widgets.capture_metadata import CaptureMetadataPanel
 
 if TYPE_CHECKING:
     from .app import AppController
@@ -101,9 +100,7 @@ class AnalysisWindow(QMainWindow):
         self._hint = QLabel(self._spec.description)
         self._hint.setWordWrap(True)
 
-        self._detail = QPlainTextEdit()
-        self._detail.setReadOnly(True)
-        self._detail.setPlaceholderText("Select a capture in the catalogue.")
+        self._detail = CaptureMetadataPanel()
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -117,11 +114,11 @@ class AnalysisWindow(QMainWindow):
 
     def _on_capture_selected(self, record: CaptureRecord | None) -> None:
         if record is None:
-            self._detail.clear()
+            self._detail.show_metadata(None)
             self.statusBar().showMessage("Select a capture")
             return
         accepted = self._is_accepted(record)
-        self._detail.setPlainText(_format_record(record, accepted=accepted))
+        self._detail.show_record(record, accepted=accepted)
         if accepted:
             self.statusBar().showMessage(str(record.path))
         else:
@@ -137,6 +134,10 @@ class AnalysisWindow(QMainWindow):
         self._on_capture_selected(record)
         self._handle_opened(record)
 
+    def _open_capture_path(self, path) -> bool:
+        """Open a capture by file path, as if chosen in the catalogue."""
+        return self._browser.open_path(path)
+
     def _handle_opened(self, record: CaptureRecord) -> None:
         self.statusBar().showMessage(f"Opened {record.stem}")
 
@@ -144,43 +145,3 @@ class AnalysisWindow(QMainWindow):
         if not self._spec.accepted_kinds:
             return True
         return record.kind in self._spec.accepted_kinds
-
-
-def _format_record(record: CaptureRecord, *, accepted: bool) -> str:
-    lines = [
-        record.stem,
-        f"campaign: {record.campaign}",
-        f"kind: {record.kind_label}",
-        f"path: {record.path}",
-    ]
-    if record.run_name:
-        lines.append(f"run: {record.run_name}")
-    if record.captured_at:
-        lines.append(f"captured: {record.captured_at}")
-    if record.points is not None:
-        lines.append(f"points: {record.points:,}")
-    if record.channel is not None:
-        lines.append(f"channel: {record.channel}")
-    if record.model_id:
-        lines.append(f"model: {record.model_id}")
-    if not accepted:
-        lines.append("")
-        lines.append("This analysis cannot open this capture kind.")
-    preview = _metadata_preview(record.metadata)
-    if preview:
-        lines.append("")
-        lines.append(preview)
-    return "\n".join(lines)
-
-
-def _metadata_preview(metadata: dict) -> str:
-    if not metadata:
-        return ""
-    compact = {
-        key: value
-        for key, value in metadata.items()
-        if key != "rows" and not isinstance(value, (list, dict))
-    }
-    if not compact:
-        return ""
-    return json.dumps(compact, indent=2, default=str)

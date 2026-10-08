@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "kind": "x123_spectra",
+  "selection": [
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_badtube9.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_badtube9_A1shield.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield.mca"
+  ],
+  "y_mode": "counts",
+  "log_y": false,
+  "smooth": false,
+  "window_channels": 5,
+  "roi": {
+    "on": false,
+    "lo": 12.0,
+    "hi": 20.0
+  },
+  "cursors": {
+    "on": false,
+    "a": 0.0,
+    "b": 0.0
+  },
+  "u_lines": false,
+  "material_lines": false,
+  "common_lines": false,
+  "difference": null,
+  "view": "selection",
+  "band": "std",
+  "groups": [],
+  "legend_fields": [
+    "dead_time_pct"
+  ],
+  "legend_names": {
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_badtube9.mca": "Broken Tube, Open Aperture",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_badtube9_A1shield.mca": "Broken Tube, Al Shield (0% Dead Time)",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m.mca": "Working Tube, Open Aperture",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield.mca": "Working Tube, Al Shield"
+  },
+  "range": null
+}

@@ -25,6 +25,7 @@ CAMPAIGN_FREQUENCY_RESPONSES = "Frequency_responses"
 VIDEO_CONTAINER = "Videos"
 SPECTRA_CONTAINER = "X123_Spectra"
 _VIDEO_SKIP_DIRS = {"Analysis_scripts"}
+RECIPES_CONTAINER = "Plot_recipes"
 _SPECTRA_SKIP_DIRS = {"Analysis_scripts", "calibration"}
 _SESSION_SKIP_DIRS = {"plots"}
 VIDEO_EXTENSIONS = {".mp4", ".mov"}
@@ -55,7 +56,7 @@ def list_campaigns() -> list[str]:
     root = measurements_dir()
     if not root.is_dir():
         return []
-    skip = {VIDEO_CONTAINER, SPECTRA_CONTAINER}
+    skip = {VIDEO_CONTAINER, SPECTRA_CONTAINER, RECIPES_CONTAINER}
     return sorted(
         path.name
         for path in root.iterdir()
@@ -196,6 +197,17 @@ def spectra_dir() -> Path:
 
 def spectrum_scripts_dir() -> Path:
     return spectra_dir() / "Analysis_scripts"
+
+
+def plot_recipes_dir() -> Path:
+    """Default home for saved plot recipes of every analysis.
+
+    Subfolders are the user's to create; recipes record which analysis they
+    belong to, so one tree serves them all.
+    """
+    path = measurements_dir() / RECIPES_CONTAINER
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def spectrum_calibration_path() -> Path:

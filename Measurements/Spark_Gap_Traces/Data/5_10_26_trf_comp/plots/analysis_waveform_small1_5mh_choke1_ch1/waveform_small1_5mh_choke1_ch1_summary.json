@@ -11,7 +11,7 @@
     "merge_gap_s": 5e-06,
     "coarse_step_s": 5e-08,
     "polarity": "positive",
-    "include_first": true,
+    "include_first": false,
     "capacitance_f": null
   },
   "metadata": {

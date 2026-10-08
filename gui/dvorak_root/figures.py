@@ -9,6 +9,11 @@ readable text, and the legend and notes sit inside the frame without covering
 the data. Every pad draws an explicit frame histogram first, so the axis
 range covers all series and a zoom made in JSROOT can be carried to Legacy
 ROOT the same way for histograms and graphs.
+
+A panel may carry a second set of curves for a right-hand y axis
+(``series2`` with ``y2_title``, ``logy2``, ``y2min`` / ``y2max``). They are
+mapped into the frame's own coordinates and labelled by a ``TGaxis`` on the
+right edge, ROOT's usual two-scale recipe, so JSROOT, PDFs and macros agree.
 """
 
 from __future__ import annotations
@@ -216,7 +221,15 @@ class _Frame:
         return (self.left, self.right, self.bottom, self.top)
 
 
-def _layout(pad_w: float, pad_h: float, sizes: _Sizes, *, titled: bool, label_chars: int) -> _Frame:
+def _layout(
+    pad_w: float,
+    pad_h: float,
+    sizes: _Sizes,
+    *,
+    titled: bool,
+    label_chars: int,
+    right_label_chars: int | None = None,
+) -> _Frame:
     """Margins and title offsets that keep every axis title clear of its labels."""
     label_px = sizes.px(sizes.axis_label)
     title_px = sizes.px(sizes.axis_title)
@@ -243,9 +256,16 @@ def _layout(pad_w: float, pad_h: float, sizes: _Sizes, *, titled: bool, label_ch
     base = min(pad_w, pad_h)
     top = max(top_px / pad_h, MC_TOP * base / pad_h)
     right = max(MC_RIGHT * base / pad_w, 16.0 / pad_w)
+    right_cap = 0.2
+    if right_label_chars is not None:
+        # A right-hand axis mirrors the left: labels, then the rotated title.
+        label_w2 = right_label_chars * 0.58 * label_px
+        clear_y2 = _LABEL_OFFSET * pad_w + label_w2 + 7.0 + 0.5 * title_px
+        right = max(right, (clear_y2 + 0.62 * title_px + 4.0) / pad_w)
+        right_cap = 0.45
     return _Frame(
         left=min(left_px / pad_w, 0.45),
-        right=min(right, 0.2),
+        right=min(right, right_cap),
         bottom=min(bottom_px / pad_h, 0.45),
         top=min(top, 0.3),
         offset_x=offset_x,
@@ -265,15 +285,37 @@ def _draw_panel(pad, panel: dict, pad_w: float, pad_h: float) -> None:
     titled = bool(panel.get("title"))
 
     content = _build_content(panel, logx=logx)
+    second = _second_axis(panel, logx=logx)
+    if second is not None:
+        content.legend.extend(second.legend)
+        if second.frame_lo is not None:
+            lo = second.frame_lo if content.frame_lo is None else min(content.frame_lo, second.frame_lo)
+            hi = second.frame_hi if content.frame_hi is None else max(content.frame_hi, second.frame_hi)
+            content.frame_lo, content.frame_hi = lo, hi
     xmin, xmax = _x_range(panel, content, logx=logx)
     ymin, ymax = _y_range(panel, content, xmin, xmax, logy=logy)
+    logy2 = bool(panel.get("logy2"))
+    y2min = y2max = 0.0
+    if second is not None:
+        y2_panel = {"ymin": panel.get("y2min"), "ymax": panel.get("y2max")}
+        y2min, y2max = _y_range(y2_panel, second, xmin, xmax, logy=logy2)
     label_chars = _label_chars(ymin, ymax, logy=logy)
-    layout = _layout(pad_w, pad_h, sizes, titled=titled, label_chars=label_chars)
+    layout = _layout(
+        pad_w,
+        pad_h,
+        sizes,
+        titled=titled,
+        label_chars=label_chars,
+        right_label_chars=_label_chars(y2min, y2max, logy=logy2) if second is not None else None,
+    )
     margins = layout.margins
     style_pad(pad, margins)
+    if second is not None:
+        # The right edge belongs to the second axis, not mirrored left ticks.
+        pad.SetTicky(0)
     _left, _right, _bottom, top = margins
 
-    if not content.draw:
+    if not content.draw and (second is None or not second.draw):
         if titled:
             _pad_title(panel, sizes, top)
         _ndc_text(0.5, 0.5, "No data", align=22, size=sizes.legend * 1.3, color="#888888")
@@ -317,18 +359,28 @@ def _draw_panel(pad, panel: dict, pad_w: float, pad_h: float) -> None:
     if headroom:
         reserved = _reserved_top(legend_box, notes, margins)
         ymin, ymax = _with_headroom(ymin, ymax, reserved, margins, logy=logy)
+        if second is not None:
+            y2min, y2max = _with_headroom(y2min, y2max, reserved, margins, logy=logy2)
 
     divx = _x_divisions(xmin, xmax, (1.0 - layout.left - layout.right) * pad_w, sizes, logx=logx)
     frame = _draw_frame(panel, xmin, xmax, ymin, ymax, sizes, layout, logy=logy, divx=divx)
+    _color_y_axis(frame, panel.get("y_color"))
     _draw_spans(spans, ymin, ymax)
     for item in content.draw:
         obj, option = item
         obj.Draw(option)
+    if second is not None:
+        scale = (ymin, ymax, logy, y2min, y2max, logy2)
+        for obj, option in second.draw:
+            _to_primary(obj, scale)
+            obj.Draw(option)
     _draw_hlines(panel.get("hlines") or [], xmin, xmax)
     _draw_vlines(panel.get("vlines") or [], ymin, ymax, sizes, logy=logy)
     _draw_points(panel.get("points") or [], sizes)
     # Ticks and the frame line go back on top of every fill.
     frame.Draw("AXIS SAME")
+    if second is not None:
+        _draw_right_axis(panel, xmax, ymin, ymax, logy, y2min, y2max, logy2, sizes, layout, pad_w)
     if legend_box is not None:
         _draw_legend(content.legend, legend_box, sizes)
     for text, x, y, align, _bottom in notes:
@@ -342,6 +394,97 @@ def _draw_panel(pad, panel: dict, pad_w: float, pad_h: float) -> None:
 def _pad_title(panel: dict, sizes: _Sizes, top: float) -> None:
     y = 1.0 - top * 0.5
     _ndc_text(0.5, y, str(panel["title"]), align=22, size=sizes.pad_title)
+
+
+# -- right-hand axis -----------------------------------------------------------
+
+
+def _second_axis(panel: dict, *, logx: bool) -> _Content | None:
+    """Curves for the right axis, built in their own units and moved later."""
+    series = list(panel.get("series2") or [])
+    if not series:
+        return None
+    second = _Content()
+    _build_series(series, second, logx=logx)
+    return second if second.draw else None
+
+
+def _fraction(value: float, lo: float, hi: float, log: bool) -> float:
+    """Where ``value`` sits between ``lo`` and ``hi`` (not clamped)."""
+    if log:
+        if value <= 0.0 or lo <= 0.0 or hi <= lo:
+            return -1.0
+        return (math.log10(value) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
+    if hi == lo:
+        return 0.0
+    return (value - lo) / (hi - lo)
+
+
+def _at_fraction(frac: float, lo: float, hi: float, log: bool) -> float:
+    if log and lo > 0.0 and hi > lo:
+        return lo * (hi / lo) ** frac
+    return lo + frac * (hi - lo)
+
+
+def _to_primary(graph, scale: tuple) -> None:
+    """Rewrite a right-axis graph's y values in the frame's coordinates."""
+    ymin, ymax, logy, y2min, y2max, logy2 = scale
+    xs = graph.GetX()
+    ys = graph.GetY()
+    for index in range(graph.GetN()):
+        frac = _fraction(float(ys[index]), y2min, y2max, logy2)
+        graph.SetPoint(index, float(xs[index]), _at_fraction(frac, ymin, ymax, logy))
+
+
+def _color_y_axis(frame, color) -> None:
+    if not color:
+        return
+    axis = frame.GetYaxis()
+    index = color_of(str(color))
+    axis.SetTitleColor(index)
+    axis.SetLabelColor(index)
+    axis.SetAxisColor(index)
+
+
+def _draw_right_axis(
+    panel: dict,
+    xmax: float,
+    ymin: float,
+    ymax: float,
+    logy: bool,
+    y2min: float,
+    y2max: float,
+    logy2: bool,
+    sizes: _Sizes,
+    layout: _Frame,
+    pad_w: float,
+) -> None:
+    # TGaxis takes the frame's data coordinates, also on a log pad.
+    y_lo, y_hi = ymin, ymax
+    option = "+LG" if logy2 else "+L"
+    axis = hold(
+        ROOT.TGaxis(xmax, y_lo, xmax, y_hi, y2min, y2max, 510 if logy2 else 505, option)
+    )
+    axis.SetName(next_id("y2axis"))
+    color = color_of(str(panel.get("y2_color") or "#000000"), "#000000")
+    axis.SetLineColor(color)
+    axis.SetLabelColor(color)
+    axis.SetTitleColor(color)
+    axis.SetLabelFont(42)
+    axis.SetTitleFont(42)
+    axis.SetLabelSize(sizes.axis_label)
+    axis.SetTitleSize(sizes.axis_title)
+    axis.SetLabelOffset(_LABEL_OFFSET)
+    axis.SetTickSize(0.03)
+    title = str(panel.get("y2_title") or "")
+    if title:
+        axis.SetTitle(root_text(title))
+        axis.CenterTitle()
+        # Same distance rule as the left axis, measured from the right edge.
+        label_w = _label_chars(y2min, y2max, logy=logy2) * 0.58 * sizes.px(sizes.axis_label)
+        dist = _LABEL_OFFSET * pad_w + label_w + 7.0 + 0.5 * sizes.px(sizes.axis_title)
+        axis.SetTitleOffset(dist / (_TITLE_K * sizes.axis_title * pad_w))
+    axis.Draw()
 
 
 # -- content ----------------------------------------------------------------
@@ -390,6 +533,9 @@ def _build_hists(specs: list, content: _Content) -> None:
         hist.SetStats(0)
         for value in values:
             hist.Fill(value)
+        if spec.get("normalize") and hist.GetMaximum() > 0:
+            # Each series scaled to its own tallest bin, to compare shapes.
+            hist.Scale(1.0 / hist.GetMaximum())
         color = str(spec.get("color") or "#1f77b4")
         hist.SetFillColor(color_alpha(color, float(spec.get("fill_alpha") or alpha)))
         hist.SetFillStyle(1001)
@@ -862,11 +1008,13 @@ def _legend_box(
         x2 = 1.0 - right - inset_x
         x1 = x2 - width_px / pad_w
     margin = min(0.5, symbol_px / max(1.0, width_px / columns))
-    return (x1, y1, x2, y2, columns, margin)
+    room_px = width_px / columns - symbol_px - 8.0
+    max_chars = max(8, int(room_px / (0.55 * text_px)))
+    return (x1, y1, x2, y2, columns, margin, max_chars)
 
 
 def _draw_legend(entries: list, box, sizes: _Sizes) -> None:
-    x1, y1, x2, y2, columns, margin = box
+    x1, y1, x2, y2, columns, margin, max_chars = box
     legend = hold(ROOT.TLegend(x1, y1, x2, y2))
     legend.SetBorderSize(0)
     legend.SetFillColor(color_alpha("#ffffff", _LEGEND_FILL_ALPHA))
@@ -877,7 +1025,10 @@ def _draw_legend(entries: list, box, sizes: _Sizes) -> None:
     if columns > 1:
         legend.SetNColumns(columns)
     for obj, label, opt in entries:
-        legend.AddEntry(obj, root_text(label), opt)
+        text = root_text(label)
+        if len(text) > max_chars:
+            text = text[: max_chars - 3].rstrip() + "..."
+        legend.AddEntry(obj, text, opt)
     legend.Draw()
 
 

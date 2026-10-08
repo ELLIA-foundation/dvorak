@@ -19,6 +19,30 @@ the breakdown “peak” is a short plateau plus 200 V LSB chatter.
    start of the steepest ~20 ns drop. All times and voltages below are taken
    from that refined index, not from the coarse seed.
 
+### Polarity
+
+`--polarity` (GUI: **Breakdown polarity**) picks which breakdowns count.
+
+- **`positive`** (default) — a positively charged gap collapsing downward.
+  The plateau before the collapse must be above 0 V; a drop that starts below
+  zero is ringing or a recharge swing, not a breakdown.
+- **`negative`** — a negatively charged gap collapsing upward. The same
+  search runs on the inverted trace. Positive breakdowns are found too, only
+  so their ringing is not counted as negative ones, and are then left out.
+- **`both`** — both kinds. When the polarity changes from one event to the
+  next, the later one must follow a gap held on its own side of zero for
+  ~1 µs before the plateau; otherwise it is the ringing of the previous
+  breakdown and is dropped.
+
+Voltage levels keep their sign (`v_breakdown`, `v_undershoot`, `v_residual`,
+`v_charge_start`, `v_charge_end` are negative for a negative breakdown, and
+so is `charge_rate`). `dv_collapse` and the slew rates are magnitudes.
+
+The search needs the collapse to be sampled. On a capture whose sample
+interval is longer than `drop_window_s` (e.g. 5 µs), every window is one
+sample and ringing between samples is aliased, so events in a dense, noisy
+stretch are unreliable for either polarity.
+
 The first cycle of a capture is often a long high-voltage plateau rather than
 a typical recharge. Those shots stay in the event table and the overview
 plot, but they are excluded from “typical” histograms, overlays, and named
@@ -46,7 +70,8 @@ the footer:
   voltage maximum.
 - **`v_breakdown` / V_bd** (V) — Median voltage over the ~20–50 ns plateau
   immediately before `t_break`. Repetitive breakdown voltage for that shot.
-  Median, not max, so 200 V LSB chatter does not inflate the peak.
+  Median, not max, so 200 V LSB chatter does not inflate the peak. Negative
+  for a negative-polarity breakdown.
 - **`v_undershoot` / V_min** (V) — Minimum in the ~200 ns after `t_break`.
   Includes inductive kick / probe-cable ringing, not necessarily the true gap
   residual.
@@ -151,6 +176,8 @@ Stored under `detection` in the summary JSON so a run is reproducible.
 
 - **`drop_threshold_v`**, **`drop_window_s`**, **`merge_gap_s`**,
   **`coarse_step_s`** — coarse-pass settings.
+- **`polarity`** — `positive`, `negative`, or `both`; **`n_positive`**,
+  **`n_negative`** — events of each sign.
 - **`n_events`**, **`n_typical`**
 - **`sample_rate_hz`**, **`sample_interval_s`**, **`y_increment_v`**,
   **`lsb_v`**

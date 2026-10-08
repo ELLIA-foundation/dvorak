@@ -3,7 +3,8 @@
 Each request is one JSON line. Each response is one line prefixed with ``DVORAK ``.
 
 ``op`` is ``render`` (a figure spec to JSON, PDF, or macro), ``legacy`` (a
-canvas exported from the JSROOT page to a macro), or ``quit``.
+canvas exported from the JSROOT page to a macro), ``read_hists`` (1D
+histograms and parameters from a ROOT file, as arrays), or ``quit``.
 """
 
 from __future__ import annotations
@@ -129,7 +130,14 @@ def main() -> int:
             _reply(proto, {"id": ident, "ok": True})
             return 0
         try:
-            payload = _legacy(request) if op == "legacy" else _render(request)
+            if op == "legacy":
+                payload = _legacy(request)
+            elif op == "read_hists":
+                from .histread import read_hists
+
+                payload = read_hists(str(request.get("path") or ""), str(request.get("match") or ""))
+            else:
+                payload = _render(request)
         except Exception:
             _reply(proto, {"id": ident, "ok": False, "error": traceback.format_exc()})
             continue

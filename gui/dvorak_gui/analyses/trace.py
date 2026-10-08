@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -19,23 +18,39 @@ from lib.waveform import load_waveform
 
 from ..catalog import CaptureRecord
 from ..kinds import KIND_WAVEFORM
+from ..recipes import RecipeMixin, key_path, path_key
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
+from ..rootcanvas import RootCanvasRenderer
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.trace_plot import TracePlot, format_seconds
-from ..window import AnalysisWindow, _format_record
+from ..widgets.capture_metadata import CaptureMetadataPanel
+from ..window import AnalysisWindow
 from ..workers import WorkerHandle
 
 TRACE_ID = "trace"
 
 
-class TraceWindow(AnalysisWindow):
+class TraceWindow(RecipeMixin, AnalysisWindow):
+    recipe_kind = TRACE_ID
+
     def __init__(self, spec: AnalysisSpec, controller: Any) -> None:
         self._plot: TracePlot | None = None
         self._worker = WorkerHandle()
         self._export_worker = WorkerHandle()
         self._load_gen = 0
         self._loaded_meta: dict[str, Any] = {}
+        self._pending_view: dict[str, Any] | None = None
         super().__init__(spec, controller)
+        self._root = RootCanvasRenderer(
+            self,
+            self._controller.root,
+            self._export_worker,
+            self._plot.root_view,
+            self.statusBar().showMessage,
+        )
+        self._controller.root.ready.connect(self._root.attach_bundle)
+        if self._controller.root.report:
+            self._root.attach_bundle(self._controller.root.report)
 
     def _build_menu(self) -> None:
         super()._build_menu()
@@ -49,6 +64,8 @@ class TraceWindow(AnalysisWindow):
         legacy_act.triggered.connect(self._open_legacy_root)
         pdf_act = QAction("Export PDF…", self)
         pdf_act.triggered.connect(self._export_pdf)
+        self._install_recipe_actions(file_menu, close_act)
+        file_menu.insertSeparator(close_act)
         file_menu.insertAction(close_act, export_act)
         file_menu.insertAction(close_act, pdf_act)
         file_menu.insertAction(close_act, legacy_act)
@@ -64,11 +81,11 @@ class TraceWindow(AnalysisWindow):
         self._plot.status_changed.connect(self._on_plot_status)
         self._plot.legacy_root_requested.connect(self._open_legacy_root)
         self._plot.pdf_requested.connect(self._export_pdf)
+        self._plot.generate_root_requested.connect(self._generate_root)
+        self._plot.root_resized.connect(self._on_root_resized)
 
         heading = QLabel("Capture")
-        self._detail = QPlainTextEdit()
-        self._detail.setReadOnly(True)
-        self._detail.setPlaceholderText("Select a capture in the catalogue.")
+        self._detail = CaptureMetadataPanel()
         meta = QWidget()
         meta_layout = QVBoxLayout(meta)
         meta_layout.addWidget(heading)
@@ -103,8 +120,11 @@ class TraceWindow(AnalysisWindow):
         time_s, voltage_v, metadata = result  # type: ignore[misc]
         self._loaded_meta = dict(metadata or {})
         self._plot.set_waveform(time_s, voltage_v)
-        self._detail.setPlainText(_format_record(record, accepted=True))
+        self._detail.show_record(record)
         self._on_plot_status(self._plot_status_prefix())
+        pending, self._pending_view = self._pending_view, None
+        if pending is not None:
+            self._plot.apply_recipe_state(pending)
 
     def _on_load_failed(self, gen: int, message: str) -> None:
         if gen != self._load_gen:
@@ -165,6 +185,38 @@ class TraceWindow(AnalysisWindow):
         name = self._chosen.stem if self._chosen is not None else "trace"
         return self._plot.publication_spec(name)
 
+    def _recipe_state(self) -> dict[str, Any] | None:
+        if self._plot is None or self._chosen is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return None
+        return {"capture": path_key(self._chosen.path), **self._plot.recipe_state()}
+
+    def _recipe_default_name(self) -> str:
+        return self._chosen.stem if self._chosen is not None else "trace"
+
+    def _apply_recipe(self, state: dict[str, Any]) -> None:
+        self._pending_view = state
+        if not self._open_capture_path(key_path(str(state.get("capture") or ""))):
+            self._pending_view = None
+            self.statusBar().showMessage("Recipe's capture was not found in the catalogue")
+
+    def _on_root_resized(self) -> None:
+        if self._plot is not None and self._plot.root_active():
+            self._generate_root()
+
+    def _generate_root(self) -> None:
+        spec = self._publication_spec()
+        if spec is None:
+            QMessageBox.information(self, self.windowTitle(), "Open a waveform first.")
+            return
+        self._root.render(spec, self._plot.root_size(), self._plot.show_root)
+
+    def _root_view(self):
+        """The JSROOT canvas when it is showing, so its edits carry over."""
+        if self._plot is not None and self._plot.root_active():
+            return self._plot.root_view
+        return None
+
     def _open_legacy_root(self) -> None:
         spec = self._publication_spec()
         if spec is None:
@@ -175,6 +227,7 @@ class TraceWindow(AnalysisWindow):
             self._controller.root,
             self._export_worker,
             spec,
+            view=self._root_view(),
             on_status=self.statusBar().showMessage,
         )
 
@@ -190,6 +243,7 @@ class TraceWindow(AnalysisWindow):
             self._export_worker,
             spec,
             default,
+            view=self._root_view(),
             on_status=self.statusBar().showMessage,
         )
 

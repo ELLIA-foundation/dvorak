@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +24,8 @@ from lib.waveform import (
     time_scale_factor,
     voltage_scale_factor,
 )
+
+from ..jsrootview import JsRootView
 
 DEFAULT_LOD_POINTS = 8_000
 _LOD_DEBOUNCE_MS = 40
@@ -71,6 +74,8 @@ class TracePlot(QWidget):
     status_changed = Signal(str)
     legacy_root_requested = Signal()
     pdf_requested = Signal()
+    generate_root_requested = Signal()
+    root_resized = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -89,6 +94,7 @@ class TracePlot(QWidget):
         self._build()
 
     def set_waveform(self, time_s: np.ndarray, voltage_v: np.ndarray) -> None:
+        self.show_live()
         self.clear_events()
         self._time_s = np.asarray(time_s, dtype=np.float64)
         self._voltage_v = np.asarray(voltage_v, dtype=np.float64)
@@ -112,6 +118,7 @@ class TracePlot(QWidget):
         self._set_export_enabled(True)
 
     def clear_waveform(self) -> None:
+        self.show_live()
         self.clear_events()
         self._time_s = None
         self._voltage_v = None
@@ -285,7 +292,59 @@ class TracePlot(QWidget):
             "panels": [panel],
         }
 
+    def root_active(self) -> bool:
+        return self._stack.currentWidget() is self.root_view
+
+    def root_size(self) -> tuple[int, int]:
+        size = self._stack.size()
+        return max(1, size.width()), max(1, size.height())
+
+    def show_root(self, payload: str, height: int) -> None:
+        """Show a ROOT-rendered canvas in place of the live plot."""
+        self.root_view.draw(payload, height)
+        self._stack.setCurrentWidget(self.root_view)
+        self._root_btn.setText("Live plot")
+
+    def show_live(self) -> None:
+        self._stack.setCurrentWidget(self._plot)
+        self._root_btn.setText("Generate ROOT")
+
+    def _on_root_clicked(self) -> None:
+        if self.root_active():
+            self.show_live()
+        else:
+            self.generate_root_requested.emit()
+
+    def recipe_state(self) -> dict[str, Any]:
+        (x0, x1), (y0, y1) = self._vb.viewRange()
+        return {
+            "range": {"x": [float(x0), float(x1)], "y": [float(y0), float(y1)]},
+            "cursors": {
+                "on": self._cursors.isChecked(),
+                "a": float(self._cursor_a.value()),
+                "b": float(self._cursor_b.value()),
+            },
+        }
+
+    def apply_recipe_state(self, state: dict[str, Any]) -> None:
+        cur = state.get("cursors") or {}
+        if "a" in cur:
+            self._place_cursors(cur["a"], cur["b"])
+        self._cursors.blockSignals(True)
+        self._cursors.setChecked(bool(cur.get("on")))
+        self._cursors.blockSignals(False)
+        self._set_cursors_visible(self._cursors.isChecked())
+        view = state.get("range")
+        if view:
+            self._updating = True
+            self._vb.setXRange(*view["x"], padding=0.0)
+            self._vb.setYRange(*view["y"], padding=0.0)
+            self._updating = False
+            self._rebuild_lod()
+            self._update_time_label()
+
     def _set_export_enabled(self, enabled: bool) -> None:
+        self._root_btn.setEnabled(enabled)
         self._legacy_btn.setEnabled(enabled)
         self._pdf_btn.setEnabled(enabled)
 
@@ -339,6 +398,12 @@ class TracePlot(QWidget):
         reset_btn.clicked.connect(self.reset_view)
         self._cursors = QCheckBox("Cursors")
         self._cursors.toggled.connect(self._toggle_cursors)
+        self._root_btn = QPushButton("Generate ROOT")
+        self._root_btn.setToolTip(
+            "Render this view with ROOT in place of the live plot. "
+            "Legacy ROOT and Save PDF then use that canvas."
+        )
+        self._root_btn.clicked.connect(self._on_root_clicked)
         self._legacy_btn = QPushButton("Legacy ROOT")
         self._legacy_btn.setToolTip(
             "Open the current view in the interactive ROOT GUI (root -l)"
@@ -351,13 +416,19 @@ class TracePlot(QWidget):
         toolbar = QHBoxLayout()
         toolbar.addWidget(self._hover, stretch=1)
         toolbar.addWidget(self._cursors)
+        toolbar.addWidget(self._root_btn)
         toolbar.addWidget(self._legacy_btn)
         toolbar.addWidget(self._pdf_btn)
         toolbar.addWidget(reset_btn)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._plot, stretch=1)
+        self.root_view = JsRootView(parent=self)
+        self.root_view.resized.connect(lambda _w, _h: self.root_resized.emit())
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._plot)
+        self._stack.addWidget(self.root_view)
+        layout.addWidget(self._stack, stretch=1)
         layout.addLayout(toolbar)
         self._set_cursors_visible(False)
 
