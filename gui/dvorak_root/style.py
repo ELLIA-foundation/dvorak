@@ -162,6 +162,7 @@ def marker_style(name: str | None) -> int:
         "square": 21,
         "triangle": 22,
         "diamond": 33,
+        "diamond_open": 27,
         "plus": 2,
         "cross": 5,
         "none": 0,

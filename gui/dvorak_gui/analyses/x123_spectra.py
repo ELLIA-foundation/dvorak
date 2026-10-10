@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QDockWidget,
     QFileDialog,
     QLabel,
     QMessageBox,
@@ -22,6 +23,7 @@ from lib.spectrum import SpectrumCapture, load_calibration, load_spectrum_file
 from ..registry import FAMILY_ANALYSIS, AnalysisSpec, get, register
 from ..rootexport import open_in_legacy_root, save_pdf
 from ..widgets.capture_metadata import CaptureMetadataPanel, flatten_metadata
+from ..widgets.line_finder import LineFinderPanel
 from ..rootcanvas import RootCanvasRenderer
 from ..recipes import RecipeMixin, key_path, path_key
 from ..widgets.spectrum_browser import SpectrumBrowser
@@ -114,6 +116,7 @@ class X123SpectraWindow(RecipeMixin, AnalysisWindow):
         reset_act.setShortcut(QKeySequence("Home"))
         reset_act.triggered.connect(self._reset_view)
         view_menu.addAction(reset_act)
+        self._view_menu = view_menu
 
     def _reset_view(self) -> None:
         self._plot.reset_view()
@@ -133,6 +136,7 @@ class X123SpectraWindow(RecipeMixin, AnalysisWindow):
         self._plot.pdf_requested.connect(self._export_pdf)
         self._plot.generate_root_requested.connect(self._generate_root)
         self._plot.root_resized.connect(self._on_root_resized)
+        self._plot.lines_requested.connect(self._show_lines)
         self._root = RootCanvasRenderer(
             self,
             self._controller.root,
@@ -163,6 +167,26 @@ class X123SpectraWindow(RecipeMixin, AnalysisWindow):
         splitter.setStretchFactor(1, 3)
         splitter.setSizes([360, 920])
         self.setCentralWidget(splitter)
+
+        self._lines_dock = QDockWidget("X-ray lines", self)
+        self._lines_dock.setObjectName("x123_lines")
+        self._lines_dock.setAllowedAreas(
+            Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+        self._lines_dock.setWidget(LineFinderPanel(self._plot, self.statusBar().showMessage))
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._lines_dock)
+        self._lines_dock.hide()
+        lines_act = self._lines_dock.toggleViewAction()
+        lines_act.setText("X-ray lines")
+        lines_act.setShortcut(QKeySequence("Ctrl+L"))
+        self._view_menu.addAction(lines_act)
+
+    def _show_lines(self) -> None:
+        if self._lines_dock.isVisible():
+            self._lines_dock.raise_()
+            return
+        self._lines_dock.show()
+        self.resizeDocks([self._lines_dock], [460], Qt.Orientation.Horizontal)
 
     def _refresh_catalogue(self) -> None:
         self._browser.refresh()
@@ -419,7 +443,8 @@ register(
             "Plot Amptek X-123 energy spectra. New session… creates "
             "Measurements/X123_Spectra/<session>/Data/ and copies .mca files "
             "into it. Overlay traces, pin sums and means, smooth them, "
-            "mark U, Th, Bi, and Ra lines, and open the view in ROOT."
+            "mark U, Th, Bi, and Ra lines, query and auto-identify X-ray lines "
+            "from a K/L/M line database, and open the view in ROOT."
         ),
         family=FAMILY_ANALYSIS,
         window_factory=_create_window,

@@ -28,6 +28,8 @@ COMMON_K_LINES: tuple[tuple[str, float], ...] = (
 )
 
 _LABEL_LEVELS = (0.92, 0.74, 0.56)
+# For crowded plots (many markers from the X-ray lines pane).
+DENSE_LABEL_LEVELS = (0.92, 0.83, 0.74, 0.65, 0.56, 0.47)
 
 
 def all_lines(
@@ -50,6 +52,7 @@ def label_positions(
     lines: list[tuple[str, float]],
     *,
     gap_kev: float = 0.7,
+    levels: tuple[float, ...] = _LABEL_LEVELS,
 ) -> list[float]:
     """Fraction along a vertical marker, staggered when neighbours would overlap."""
     slots = [0] * len(lines)
@@ -58,9 +61,9 @@ def label_positions(
     for index in sorted(range(len(lines)), key=lambda i: lines[i][1]):
         energy = lines[index][1]
         if previous_energy is not None and energy - previous_energy < gap_kev:
-            level = (level + 1) % len(_LABEL_LEVELS)
+            level = (level + 1) % len(levels)
         else:
             level = 0
         slots[index] = level
         previous_energy = energy
-    return [_LABEL_LEVELS[level] for level in slots]
+    return [levels[level] for level in slots]

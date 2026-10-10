@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -53,6 +54,9 @@ _CURSOR_B = "#2ca02c"
 _ROI = (31, 119, 180)
 _ROI_COLOR = "#1f77b4"
 _LINE_COLOR = "#555555"
+# Markers added from the X-ray lines pane. A marker follows the color of the
+# spectrum it came from; these are for markers with no spectrum, by source.
+_MARKER_COLORS = {"manual": "#6a3d9a", "auto": "#b15928"}
 _Y_MODES = (
     ("counts", "Counts"),
     ("cps", "Counts / s"),
@@ -172,6 +176,31 @@ def _is_reference(curve: _PlotCurve, ref_key: str | None) -> bool:
     return False
 
 
+def _clean_markers(raw: Any) -> list[dict[str, Any]]:
+    """Normalise marker dicts from a recipe or the lines pane; drop malformed ones."""
+    out: list[dict[str, Any]] = []
+    for item in raw or []:
+        try:
+            energy = float(item["energy"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        source = item.get("source")
+        color = QColor(str(item.get("color") or ""))
+        out.append(
+            {
+                "label": str(item.get("label") or f"{energy:.3f} keV"),
+                "energy": energy,
+                "source": source if source in _MARKER_COLORS else "manual",
+                "show": bool(item.get("show", True)),
+                # Key of the spectrum the marker belongs to ("" for none).
+                "spectrum": str(item.get("spectrum") or ""),
+                # "" follows that spectrum's color.
+                "color": color.name() if color.isValid() else "",
+            }
+        )
+    return out
+
+
 def _tex_label(text: str) -> str:
     """Keep filenames and line names readable in TLatex.
 
@@ -187,6 +216,10 @@ class SpectrumPlot(QWidget):
     pdf_requested = Signal()
     generate_root_requested = Signal()
     root_resized = Signal()
+    lines_requested = Signal()
+    energy_picked = Signal(float)
+    curves_changed = Signal()
+    markers_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -198,6 +231,13 @@ class SpectrumPlot(QWidget):
         self._legend_keys: list[str] = []
         self._names: dict[str, str] = {}
         self._syncing = False
+        # Line markers from the X-ray lines pane:
+        # {"label", "energy", "source": "manual" | "auto", "show"}.
+        self._markers: list[dict[str, Any]] = []
+        # Peaks found by a scan, per spectrum key.
+        self._peak_marks: dict[str, list[float]] = {}
+        self._pick_mode = False
+        self._line_items: list[pg.InfiniteLine] = []
         self._math = load_spectrum_module("spectrum")
         self._lines = load_spectrum_module("lines")
         self._build()
@@ -410,6 +450,13 @@ class SpectrumPlot(QWidget):
         self._k_lines = QCheckBox("Common lines")
         self._k_lines.toggled.connect(self._redraw)
 
+        self._lines_btn = QPushButton("Lines…")
+        self._lines_btn.setToolTip(
+            "Open the X-ray line database: query energies, label peaks, "
+            "and scan the spectrum for lines"
+        )
+        self._lines_btn.clicked.connect(self.lines_requested.emit)
+
         self._diff = QComboBox()
         self._diff.addItem("No difference", None)
         self._diff.currentIndexChanged.connect(self._redraw)
@@ -451,6 +498,7 @@ class SpectrumPlot(QWidget):
         row2.addWidget(self._u_lines)
         row2.addWidget(self._material_lines)
         row2.addWidget(self._k_lines)
+        row2.addWidget(self._lines_btn)
         row2.addWidget(QLabel("Δ vs"))
         row2.addWidget(self._diff, stretch=1)
 
@@ -539,6 +587,10 @@ class SpectrumPlot(QWidget):
             rateLimit=40,
             slot=self._on_mouse_moved,
         )
+        self._plot.scene().sigMouseClicked.connect(self._on_mouse_clicked)
+        self._range_proxy = pg.SignalProxy(
+            self._vb.sigXRangeChanged, rateLimit=10, slot=self._on_x_range_changed
+        )
 
         self._region = pg.LinearRegionItem(
             values=(12.0, 20.0),
@@ -616,6 +668,7 @@ class SpectrumPlot(QWidget):
             "u_lines": self._u_lines.isChecked(),
             "material_lines": self._material_lines.isChecked(),
             "common_lines": self._k_lines.isChecked(),
+            "line_markers": self._markers_for_recipe(),
             "difference": diff,
             "view": "groups" if self._groups_view else "selection",
             "band": self._band_metric.currentData(),
@@ -679,6 +732,8 @@ class SpectrumPlot(QWidget):
             self._u_lines.setChecked(bool(state.get("u_lines")))
             self._material_lines.setChecked(bool(state.get("material_lines")))
             self._k_lines.setChecked(bool(state.get("common_lines")))
+            self._markers = self._markers_from_recipe(state.get("line_markers"))
+            self._peak_marks = {}
             roi = state.get("roi") or {}
             cur = state.get("cursors") or {}
             for box, on in ((self._roi, roi.get("on")), (self._cursors, cur.get("on"))):
@@ -706,6 +761,7 @@ class SpectrumPlot(QWidget):
         elif diff:
             pick(self._diff, str(key_path(diff)))
         self._sync_cps()
+        self.markers_changed.emit()
         self._redraw()
         view = state.get("range")
         if view and self._stack.currentWidget() is self._plot:
@@ -1320,24 +1376,39 @@ class SpectrumPlot(QWidget):
         self._sync_cps()
         self._redraw()
 
-    def _marked(self) -> list[tuple[str, float, float]]:
+    def _marked(self) -> list[tuple[str, float, float, str]]:
         rows = self._lines.all_lines(
             uranium=self._u_lines.isChecked(),
             common=self._k_lines.isChecked(),
             material=self._material_lines.isChecked(),
         )
+        colors = [_LINE_COLOR] * len(rows)
+        for marker in self._markers:
+            if marker["show"]:
+                rows.append((marker["label"], marker["energy"]))
+                colors.append(self.marker_color(marker))
+        if self._markers:
+            # Long pane labels need room: stagger by a share of the visible span.
+            lo, hi = self._label_span()
+            positions = self._lines.label_positions(
+                rows,
+                gap_kev=max(0.7, 0.08 * (hi - lo)),
+                levels=self._lines.DENSE_LABEL_LEVELS,
+            )
+        else:
+            positions = self._lines.label_positions(rows)
         return [
-            (name, energy, position)
-            for (name, energy), position in zip(rows, self._lines.label_positions(rows))
+            (name, energy, position, color)
+            for (name, energy), position, color in zip(rows, positions, colors)
         ]
 
     def _marker_lines(self) -> list[dict]:
         lines: list[dict] = []
-        for name, energy, position in self._marked():
+        for name, energy, position, color in self._marked():
             lines.append(
                 {
                     "x": float(energy),
-                    "color": _LINE_COLOR,
+                    "color": color,
                     "label": _tex_label(name),
                     "style": "dashed",
                     "label_pos": position,
@@ -1403,6 +1474,7 @@ class SpectrumPlot(QWidget):
             self._root_btn.setText("Generate ROOT")
             self._set_export_enabled(False)
             self.status_changed.emit("")
+            self.curves_changed.emit()
             return
 
         self._plot.clear()
@@ -1449,10 +1521,12 @@ class SpectrumPlot(QWidget):
             )
 
         self._draw_lines()
+        self._draw_peak_marks(curves)
         self._stack.setCurrentWidget(self._plot)
         self._root_btn.setText("Generate ROOT")
         self._set_export_enabled(True)
         self._update_readout()
+        self.curves_changed.emit()
 
     def _draw_spread(self, curve: _PlotCurve) -> None:
         if curve.spread is None:
@@ -1476,17 +1550,198 @@ class SpectrumPlot(QWidget):
         fill.setZValue(-10)
         self._plot.addItem(fill)
 
+    def _label_span(self) -> tuple[float, float]:
+        """X span the plot shows, or will show once auto-range catches up."""
+        if self._vb.autoRangeEnabled()[0]:
+            curves = [c for c in self._display_curves() if c.energy.size]
+            if curves:
+                return (
+                    min(float(c.energy[0]) for c in curves),
+                    max(float(c.energy[-1]) for c in curves),
+                )
+        return self.view_x_range()
+
+    def _on_x_range_changed(self, *_args: object) -> None:
+        # Re-stagger marker labels for the new zoom without a full redraw.
+        if not self._markers or not self._line_items:
+            return
+        marked = self._marked()
+        if len(marked) != len(self._line_items):
+            return
+        for line, (_name, _energy, position, _color) in zip(self._line_items, marked):
+            if line.label is not None:
+                line.label.setPosition(position)
+
     def _draw_lines(self) -> None:
-        for name, energy, position in self._marked():
+        self._line_items = []
+        for name, energy, position, color in self._marked():
             line = pg.InfiniteLine(
                 pos=energy,
                 angle=90,
                 movable=False,
-                pen=pg.mkPen("#555555", width=1, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine),
                 label=name,
-                labelOpts={"position": position, "color": "#555555"},
+                labelOpts={"position": position, "color": color},
             )
             self._plot.addItem(line)
+            self._line_items.append(line)
+
+    def _draw_peak_marks(self, curves: list[_PlotCurve]) -> None:
+        """Triangles at each scanned spectrum's peaks, in that spectrum's color."""
+        for key, energies in self._peak_marks.items():
+            curve = next((c for c in curves if c.key == key and c.primary), None)
+            if curve is None or not energies or curve.energy.size == 0:
+                continue
+            xs = np.asarray(energies, dtype=np.float64)
+            ys = np.interp(xs, curve.energy, curve.y)
+            if self._log.isChecked():
+                ys = np.maximum(ys, 1e-6)
+            self._plot.plot(
+                xs,
+                ys,
+                pen=None,
+                symbol="t",
+                symbolSize=9,
+                symbolBrush=pg.mkBrush(curve.color),
+                symbolPen=pg.mkPen(curve.color),
+            )
+
+    # -- X-ray lines pane -----------------------------------------------------
+
+    def markers(self) -> list[dict[str, Any]]:
+        return [dict(m) for m in self._markers]
+
+    def set_markers(self, markers: list[dict[str, Any]]) -> None:
+        self._markers = _clean_markers(markers)
+        self.markers_changed.emit()
+        self._redraw()
+
+    def add_markers(self, markers: list[dict[str, Any]]) -> int:
+        """Append markers, skipping any with the same label, energy and spectrum."""
+        have = {(m["label"], round(m["energy"], 4), m["spectrum"]) for m in self._markers}
+        added = 0
+        for marker in _clean_markers(markers):
+            key = (marker["label"], round(marker["energy"], 4), marker["spectrum"])
+            if key in have:
+                continue
+            have.add(key)
+            self._markers.append(marker)
+            added += 1
+        if added:
+            self.markers_changed.emit()
+            self._redraw()
+        return added
+
+    def set_peak_marks(self, marks: dict[str, list[float]]) -> None:
+        """Triangles at each spectrum's found peaks; ``marks`` maps spectrum key to energies."""
+        self._peak_marks = {k: [float(e) for e in v] for k, v in marks.items() if v}
+        self._redraw()
+
+    def source_color(self, key: str) -> str | None:
+        """The color a displayed spectrum (or pinned group) is drawn in."""
+        if not key:
+            return None
+        for group in self._groups:
+            if key == f"group:{group.group_id}":
+                return group.color
+        for index, trace in enumerate(self._traces):
+            if str(trace.path) == key:
+                return _COLORS[index % len(_COLORS)]
+        return None
+
+    def marker_color(self, marker: dict[str, Any]) -> str:
+        """Override, else the source spectrum's color, else the default for its origin."""
+        return (
+            marker.get("color")
+            or self.source_color(marker.get("spectrum", ""))
+            or _MARKER_COLORS.get(marker.get("source", ""), _LINE_COLOR)
+        )
+
+    def _markers_for_recipe(self) -> list[dict[str, Any]]:
+        """Markers with spectrum keys that survive a restart: paths relative, groups by index."""
+        out = []
+        for marker in self._markers:
+            item = dict(marker)
+            key = item["spectrum"]
+            if key.startswith("group:"):
+                gid = int(key.split(":", 1)[1])
+                index = next((i for i, g in enumerate(self._groups) if g.group_id == gid), None)
+                item["spectrum"] = "" if index is None else f"group:{index}"
+            elif key:
+                item["spectrum"] = path_key(key)
+            out.append(item)
+        return out
+
+    def _markers_from_recipe(self, raw: Any) -> list[dict[str, Any]]:
+        markers = _clean_markers(raw)
+        for marker in markers:
+            key = marker["spectrum"]
+            if key.startswith("group:"):
+                try:
+                    index = int(key.split(":", 1)[1])
+                except ValueError:
+                    index = -1
+                marker["spectrum"] = (
+                    f"group:{self._groups[index].group_id}"
+                    if 0 <= index < len(self._groups)
+                    else ""
+                )
+            elif key:
+                marker["spectrum"] = str(key_path(key))
+        return markers
+
+    def set_pick_mode(self, on: bool) -> None:
+        self._pick_mode = bool(on)
+        self._plot.setCursor(
+            Qt.CursorShape.CrossCursor if on else Qt.CursorShape.ArrowCursor
+        )
+
+    def view_x_range(self) -> tuple[float, float]:
+        (x0, x1), _ = self._vb.viewRange()
+        return float(min(x0, x1)), float(max(x0, x1))
+
+    def scan_sources(self) -> list[tuple[str, str]]:
+        """(key, label) of each spectrum on screen that a peak scan can use."""
+        if self._groups_view:
+            return [
+                (f"group:{g.group_id}", f"{g.name} ({g.kind}, n={len(g.traces)})")
+                for g in self._groups
+                if g.traces
+            ]
+        return [(str(t.path), self._base(t)) for t in self._traces]
+
+    def scan_counts(self, key: str) -> tuple[np.ndarray, np.ndarray, float | None] | None:
+        """Raw counts for ``key`` (no smoothing or Y mode): energy, counts, live time."""
+        if key.startswith("group:"):
+            group = self._find_group(int(key.split(":", 1)[1]))
+            if group is None or not group.traces:
+                return None
+            energies = [t.energy_kev for t in group.traces]
+            counts = [t.counts for t in group.traces]
+            if group.kind == "mean":
+                energy, mean, _std, _sem = self._math.mean_band(energies, counts)
+                return energy, mean, None
+            energy, total = self._math.sum_counts(energies, counts)
+            return energy, total, self._sum_live_time(group.traces)
+        trace = next((t for t in self._traces if str(t.path) == key), None)
+        if trace is None:
+            return None
+        return (
+            np.asarray(trace.energy_kev, dtype=np.float64),
+            np.asarray(trace.counts, dtype=np.float64),
+            trace.live_time_s,
+        )
+
+    def _on_mouse_clicked(self, event: Any) -> None:
+        if not self._pick_mode or event.button() != Qt.MouseButton.LeftButton:
+            return
+        if self._stack.currentWidget() is not self._plot:
+            return
+        pos = event.scenePos()
+        if not self._vb.sceneBoundingRect().contains(pos):
+            return
+        event.accept()
+        self.energy_picked.emit(float(self._vb.mapSceneToView(pos).x()))
 
     def _on_mouse_moved(self, event: Any) -> None:
         pos = event[0]

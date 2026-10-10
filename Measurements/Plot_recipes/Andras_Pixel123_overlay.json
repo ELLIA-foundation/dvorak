@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "kind": "x123_pixel_overlay",
+  "x123": [
+    "X123_Spectra/CPX_tests_2_10_2026/Data/5.6m_covered_t5_high_stat.mca"
+  ],
+  "pixel": [
+    "2026-09-26_141323"
+  ],
+  "pixel_data_root": "/Users/ajaysrinivasan/Projects/Pixet/Data/OPIXE Data",
+  "y_mode": "rate",
+  "log_left": false,
+  "log_right": false,
+  "smooth": true,
+  "window_channels": 3,
+  "pixel_region": "chip",
+  "pixel_errors": false,
+  "roi": {
+    "on": false,
+    "lo": 12.0,
+    "hi": 20.0
+  },
+  "cursors": {
+    "on": false,
+    "a": 0.0,
+    "b": 0.0
+  },
+  "u_lines": false,
+  "material_lines": false,
+  "common_lines": false,
+  "legend_fields": [],
+  "legend_names": {},
+  "range": {
+    "x": [
+      -0.29939020000000005,
+      30.309810199999998
+    ],
+    "y_left": [
+      -7.251297553991958,
+      190.45631045011484
+    ],
+    "y_right": [
+      -1392.2592573613954,
+      36102.1992573614
+    ]
+  }
+}

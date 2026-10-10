@@ -27,15 +27,31 @@ def _th1(obj, path: str) -> dict:
     }
 
 
-def _walk(directory, prefix: str, pattern, hists: list, params: dict) -> None:
+def _profile(obj, path: str) -> dict:
+    nbins = obj.GetNbinsX()
+    return {
+        "path": path,
+        "means": [float(obj.GetBinContent(i)) for i in range(1, nbins + 1)],
+        "entries": [float(obj.GetBinEntries(i)) for i in range(1, nbins + 1)],
+    }
+
+
+def _walk(directory, prefix: str, pattern, hists: list, params: dict, profiles: list) -> None:
     for key in directory.GetListOfKeys():
         name = str(key.GetName())
         path = f"{prefix}{name}"
         obj = key.ReadObj()
         if obj.InheritsFrom("TDirectory"):
-            _walk(obj, f"{path}/", pattern, hists, params)
+            _walk(obj, f"{path}/", pattern, hists, params, profiles)
             continue
-        if obj.InheritsFrom("TProfile") or obj.InheritsFrom("TH2"):
+        if obj.InheritsFrom("TProfile") and not obj.InheritsFrom("TProfile2D"):
+            # A mean-energy profile sits beside its spectrum: hFoo -> pFoo.
+            if name.startswith("p"):
+                twin = f"{prefix}h{name[1:]}"
+                if pattern is None or pattern.search(twin):
+                    profiles.append(_profile(obj, path))
+            continue
+        if obj.InheritsFrom("TH2"):
             continue
         if obj.InheritsFrom("TH1"):
             if pattern is None or pattern.search(path):
@@ -59,8 +75,9 @@ def read_hists(path: str, match: str = "") -> dict:
     try:
         hists: list = []
         params: dict = {}
+        profiles: list = []
         pattern = re.compile(match) if match else None
-        _walk(handle, "", pattern, hists, params)
+        _walk(handle, "", pattern, hists, params, profiles)
     finally:
         handle.Close()
-    return {"hists": hists, "params": params}
+    return {"hists": hists, "params": params, "profiles": profiles}

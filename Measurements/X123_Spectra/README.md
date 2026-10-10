@@ -47,6 +47,22 @@ python3 Measurements/X123_Spectra/Analysis_scripts/import_andras.py \
   --source "/path/to/X-123 Andras data"
 ```
 
+## X-ray line database
+
+`Analysis_scripts/xray_lines.json` holds every radiative K, L1–3 and M1–5
+line for Z = 4–98 at 0.1–150 keV, generated from xraylib by
+`build_line_db.py` (the GUI only reads the JSON). `rel` is the line's share of
+the strongest line in its element's K, L or M family, from Kissel cascade XRF
+cross sections at 1.5× the family's deepest edge. A few γ lines (Am-241,
+Co-57, Cd-109, U/Th chain) are appended with emission probability as `rel`.
+`linedb.py` queries it, and `peaks.py` holds the automatic peak search and
+identification used by the GUI's **Lines…** pane. To rebuild:
+
+```bash
+pip install xraylib
+python3 Measurements/X123_Spectra/Analysis_scripts/build_line_db.py
+```
+
 ## Overlay CLI
 
 ```bash
@@ -56,4 +72,4 @@ python3 Measurements/X123_Spectra/Analysis_scripts/plot_spectrum.py path/to/a.mc
 
 ## GUI
 
-**X-123 Spectra** lists sessions. **New session…** copies `.mca` files into the session `Data/` folder. Shift/Command-click overlays traces from any session. Controls: log Y, counts / cps / normalize, moving average (channels or keV), ROI (integral, centroid, FWHM), cursors (ΔE), U L, Th/Bi/Ra, and common line markers, difference vs a reference, PNG export. Pin the current selection as a co-added sum or a mean with a shaded sample standard deviation (or SEM) and overlay those groups. **Split by phase** makes one group for each pre, post, and unlabeled set in the selection. **Legacy ROOT** and **Save PDF…** send the current view to ROOT.
+**X-123 Spectra** lists sessions. **New session…** copies `.mca` files into the session `Data/` folder. Shift/Command-click overlays traces from any session. Controls: log Y, counts / cps / normalize, moving average (channels or keV), ROI (integral, centroid, FWHM), cursors (ΔE), U L, Th/Bi/Ra, and common line markers, difference vs a reference, PNG export. **Lines…** opens the X-ray line pane: query candidate lines at an energy, add an element's lines, or auto-scan a spectrum for peaks and label them. Pin the current selection as a co-added sum or a mean with a shaded sample standard deviation (or SEM) and overlay those groups. **Split by phase** makes one group for each pre, post, and unlabeled set in the selection. **Legacy ROOT** and **Save PDF…** send the current view to ROOT.

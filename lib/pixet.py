@@ -265,6 +265,8 @@ class PixelSpectrum:
     errors: np.ndarray
     live_time_s: float | None = None
     thickness_mm: float | None = None
+    mean_energy: np.ndarray | None = None  # per-bin <E> of the clusters, from pClusterEnergy
+    mean_entries: np.ndarray | None = None
 
     @property
     def centers(self) -> np.ndarray:
@@ -296,6 +298,9 @@ def spectra_from_payload(payload: dict, fallback_live: float | None = None) -> l
         thickness = list((config.get("regions") or {}).get("thickness") or [])
     except (json.JSONDecodeError, AttributeError):
         thickness = []
+    profiles = {
+        str(p.get("path") or ""): p for p in payload.get("profiles") or []
+    }
     spectra: list[PixelSpectrum] = []
     for hist in payload.get("hists") or []:
         path = str(hist.get("path") or "")
@@ -313,6 +318,14 @@ def spectra_from_payload(payload: dict, fallback_live: float | None = None) -> l
         counts = np.asarray(hist.get("counts") or [], dtype=np.float64)
         if edges.size != counts.size + 1 or counts.size == 0:
             continue
+        head, _, tail = path.rpartition("/")
+        profile = profiles.get(f"{head}/p{tail[1:]}" if head else f"p{tail[1:]}")
+        means = entries = None
+        if profile is not None:
+            means = np.asarray(profile.get("means") or [], dtype=np.float64)
+            entries = np.asarray(profile.get("entries") or [], dtype=np.float64)
+            if means.size != counts.size or entries.size != counts.size:
+                means = entries = None
         spectra.append(
             PixelSpectrum(
                 key=key,
@@ -322,7 +335,75 @@ def spectra_from_payload(payload: dict, fallback_live: float | None = None) -> l
                 errors=np.asarray(hist.get("errors") or np.sqrt(counts), dtype=np.float64),
                 live_time_s=live,
                 thickness_mm=thick,
+                mean_energy=means,
+                mean_entries=entries,
             )
         )
     spectra.sort(key=lambda s: -1 if s.key == CHIP_KEY else int(s.key.split(":")[1]))
     return spectra
+
+
+POINT_RULES = (
+    ("center", "Bin centre"),
+    ("centroid", "Weighted centroid"),
+    ("lw", "Lafferty-Wyatt"),
+    ("both", "Centre + Lafferty-Wyatt"),
+)
+
+
+def _centroid_offset(w: float) -> float:
+    """Centroid offset from the low edge, as a fraction of the bin, for exp(-alpha E)."""
+    if abs(w) < 1e-8:
+        return 0.5 - w / 12.0
+    return 1.0 / w - np.exp(-w) / (1.0 - np.exp(-w))
+
+
+def _lw_offset(w: float) -> float:
+    if abs(w) < 1e-8:
+        return 0.5 - w / 24.0
+    return float(np.log(w / (1.0 - np.exp(-w))) / w)
+
+
+def _solve_slope(frac: float) -> float:
+    lo, hi = -50.0, 50.0
+    if frac >= _centroid_offset(lo):
+        return lo
+    if frac <= _centroid_offset(hi):
+        return hi
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _centroid_offset(mid) > frac:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def point_abscissae(spectrum: PixelSpectrum, rule: str) -> np.ndarray:
+    """Marker x per bin, as OPIXE's ``TSpectrumAbscissae`` (SCR/TSpectrumPoints.h).
+
+    ``rule`` is ``center``, ``centroid`` or ``lw`` (Lafferty-Wyatt). Bins with no
+    usable mean-energy profile entry stay at the bin centre.
+    """
+    edges = spectrum.edges
+    x = 0.5 * (edges[:-1] + edges[1:])
+    means, entries = spectrum.mean_energy, spectrum.mean_entries
+    if rule == "center" or means is None or entries is None:
+        return x
+    x = x.copy()
+    for b in range(x.size):
+        lo, hi = edges[b], edges[b + 1]
+        width = hi - lo
+        m = means[b]
+        if width <= 0 or entries[b] <= 0 or not (lo < m < hi):
+            continue
+        if rule == "centroid":
+            x[b] = m
+            continue
+        frac = (m - lo) / width
+        if abs(frac - 0.5) < 1e-6:
+            continue
+        shifted = lo + width * _lw_offset(_solve_slope(frac))
+        if lo < shifted < hi:
+            x[b] = shifted
+    return x

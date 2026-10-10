@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from dvorak_root.text import root_text
-from lib.pixet import CHIP_KEY, PixelSpectrum, region_label
+from lib.pixet import CHIP_KEY, POINT_RULES, PixelSpectrum, point_abscissae, region_label
 
 from ..campaign_import import load_spectrum_module
 from ..jsrootview import JsRootView
@@ -93,6 +93,8 @@ class _Curve:
     family: str  # "x123" or "pixel"
     width: float = 1.5
     band: tuple[np.ndarray, np.ndarray] | None = None
+    # Marker sets for the "points with errors" style: dicts of x, y, err, xlo, xhi, hollow.
+    markers: list[dict[str, Any]] | None = None
 
 
 def _steps(edges: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -303,6 +305,32 @@ class DualSpectrumPlot(QWidget):
             scale = scale / total
         return counts * scale, errors * scale
 
+    def _style(self) -> str:
+        return str(self._style_combo.currentData() or "hist")
+
+    def _pixel_markers(
+        self, spectrum: PixelSpectrum, y: np.ndarray, err: np.ndarray
+    ) -> list[dict[str, Any]]:
+        """Marker sets as OPIXE draws them: one point per filled bin, bars spanning the bin."""
+        rule = str(self._points.currentData() or "center")
+        rules = ["center", "lw"] if rule == "both" else [rule]
+        keep = np.isfinite(y) & (y > 0)
+        edges = spectrum.edges
+        sets = []
+        for index, name in enumerate(rules):
+            x = point_abscissae(spectrum, name)
+            sets.append(
+                {
+                    "x": x[keep],
+                    "y": y[keep],
+                    "err": err[keep],
+                    "xlo": (x - edges[:-1])[keep],
+                    "xhi": (edges[1:] - x)[keep],
+                    "hollow": rule == "both" and index == 1,
+                }
+            )
+        return sets
+
     def _curves(self) -> tuple[list[_Curve], list[_Curve], list[str]]:
         """(x123 curves, pixel curves, skipped labels)."""
         skipped: list[str] = []
@@ -335,7 +363,8 @@ class DualSpectrumPlot(QWidget):
             y, err = values
             xs, ys = _steps(spectrum.edges, y)
             band = None
-            if show_errors:
+            markers = self._pixel_markers(spectrum, y, err) if self._style() == "points" else None
+            if show_errors and markers is None:
                 _x, lo = _steps(spectrum.edges, y - err)
                 _x, hi = _steps(spectrum.edges, y + err)
                 band = (lo, hi)
@@ -353,6 +382,7 @@ class DualSpectrumPlot(QWidget):
                     family="pixel",
                     width=2.0,
                     band=band,
+                    markers=markers,
                 )
             )
         return left, right, skipped
@@ -455,7 +485,37 @@ class DualSpectrumPlot(QWidget):
         axis.setTextPen(pen)
         axis.setLabel(text, color=color or "#333333")
 
+    def _draw_markers(self, curve: _Curve, vb, log: bool, legend) -> None:
+        color = pg.mkColor(curve.color)
+        for marker in curve.markers or []:
+            y = marker["y"]
+            err = marker["err"]
+            if log:
+                top_v, bottom_v = y + err, np.maximum(y - err, y * 1e-3)
+                ly = np.log10(y)
+                top = np.log10(top_v) - ly
+                bottom = ly - np.log10(bottom_v)
+                y = ly
+            else:
+                top = bottom = err
+            bars = pg.ErrorBarItem(
+                x=marker["x"], y=y, top=top, bottom=bottom,
+                left=marker["xlo"], right=marker["xhi"],
+                pen=pg.mkPen(color, width=1.0), beam=0.0,
+            )
+            fill = pg.mkBrush(255, 255, 255) if marker["hollow"] else pg.mkBrush(color)
+            scatter = pg.ScatterPlotItem(
+                x=marker["x"], y=y, symbol="d", size=7, pen=pg.mkPen(color, width=1.2), brush=fill
+            )
+            for item in (bars, scatter):
+                (self._plot if vb is None else vb).addItem(item)
+            if not marker["hollow"]:
+                legend.addItem(scatter, curve.label)
+
     def _draw_curve(self, curve: _Curve, vb, log: bool, legend) -> None:
+        if curve.markers is not None:
+            self._draw_markers(curve, vb, log, legend)
+            return
         pen = pg.mkPen(curve.color, width=curve.width)
         y = self._plot_y(curve.y, log)
         item = pg.PlotDataItem(curve.x, y, pen=pen, connect="finite")
@@ -544,9 +604,37 @@ class DualSpectrumPlot(QWidget):
             lo, hi = 10.0**lo, 10.0**hi
         return lo, hi
 
+    def _marker_series(self, curve: _Curve, xmin: float, xmax: float, log: bool) -> list[dict]:
+        out: list[dict] = []
+        for marker in curve.markers or []:
+            x, y, err = marker["x"], marker["y"], marker["err"]
+            sel = (x >= xmin) & (x <= xmax)
+            if not sel.any():
+                continue
+            y, err = y[sel], err[sel]
+            low = np.minimum(err, y * (1 - 1e-3)) if log else err
+            out.append(
+                {
+                    "x": x[sel].tolist(),
+                    "y": y.tolist(),
+                    "x_err_low": marker["xlo"][sel].tolist(),
+                    "x_err_high": marker["xhi"][sel].tolist(),
+                    "y_err_low": low.tolist(),
+                    "y_err_high": err.tolist(),
+                    "label": "" if marker["hollow"] else root_text(curve.label),
+                    "color": curve.color,
+                    "line": "none",
+                    "marker": "diamond_open" if marker["hollow"] else "diamond",
+                    "marker_size": 1.0,
+                }
+            )
+        return out
+
     def _series(self, curve: _Curve, xmin: float, xmax: float, log: bool) -> list[dict]:
         mask = (curve.x >= xmin) & (curve.x <= xmax)
         # Keep one point either side so lines run to the frame edge.
+        if curve.markers is not None:
+            return self._marker_series(curve, xmin, xmax, log)
         idx = np.flatnonzero(mask)
         if idx.size == 0:
             return []
@@ -750,6 +838,8 @@ class DualSpectrumPlot(QWidget):
             "window_channels": self._window.value(),
             "pixel_region": self._region_key(),
             "pixel_errors": self._errors.isChecked(),
+            "pixel_style": self._style(),
+            "pixel_points": str(self._points.currentData() or "center"),
             "roi": {"on": self._roi.isChecked(), "lo": float(lo), "hi": float(hi)},
             "cursors": {
                 "on": self._cursors.isChecked(),
@@ -774,6 +864,8 @@ class DualSpectrumPlot(QWidget):
         try:
             pick(self._y_mode, state.get("y_mode"))
             pick(self._region, state.get("pixel_region"))
+            pick(self._style_combo, state.get("pixel_style") or "hist")
+            pick(self._points, state.get("pixel_points") or "center")
             self._log_l.setChecked(bool(state.get("log_left")))
             self._log_r.setChecked(bool(state.get("log_right")))
             self._smooth.setChecked(bool(state.get("smooth")))
@@ -837,6 +929,11 @@ class DualSpectrumPlot(QWidget):
         self._root_btn.setEnabled(enabled)
         self._legacy_btn.setEnabled(enabled)
         self._pdf_btn.setEnabled(enabled)
+
+    def _on_style_changed(self, *_args: object) -> None:
+        self._points.setEnabled(self._style() == "points")
+        self._errors.setEnabled(self._style() == "hist")
+        self._redraw()
 
     def _on_window_channels(self, value: int) -> None:
         if self._syncing:
@@ -911,6 +1008,23 @@ class DualSpectrumPlot(QWidget):
             "OPIXE built from the measurement's borders"
         )
         self._region.currentIndexChanged.connect(self._redraw)
+        self._style_combo = QComboBox()
+        self._style_combo.addItem("Line", "hist")
+        self._style_combo.addItem("Points with errors", "points")
+        self._style_combo.setToolTip("Draw the pixel spectrum as a stepped line or as OPIXE-style points")
+        self._style_combo.currentIndexChanged.connect(self._on_style_changed)
+        self._points = QComboBox()
+        for value, label in POINT_RULES:
+            self._points.addItem(label, value)
+        self._points.setToolTip(
+            "Where the marker sits inside each energy bin. A falling spectrum "
+            "puts most of a wide bin's counts near its low edge, so the bin "
+            "centre sits too high. Horizontal bars span the bin; they are bin "
+            "extent, not an uncertainty. Needs the mean-energy profile OPIXE "
+            "stores in derived.root; bins without one stay at the centre."
+        )
+        self._points.currentIndexChanged.connect(self._redraw)
+        self._points.setEnabled(False)
         self._errors = QCheckBox("Pixel ±1σ")
         self._errors.setToolTip("Shade the statistical error of each pixel bin")
         self._errors.toggled.connect(self._redraw)
@@ -955,6 +1069,9 @@ class DualSpectrumPlot(QWidget):
         row1.addSpacing(8)
         row1.addWidget(QLabel("Pixel"))
         row1.addWidget(self._region)
+        row1.addWidget(self._style_combo)
+        row1.addWidget(QLabel("Points"))
+        row1.addWidget(self._points)
         row1.addWidget(self._errors)
         row1.addStretch(1)
 

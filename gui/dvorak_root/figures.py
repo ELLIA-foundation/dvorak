@@ -785,7 +785,19 @@ def _make_graph(item: dict):
         return None
     xa = array.array("d", (float(xs[i]) for i in range(count)))
     ya = array.array("d", (float(ys[i]) for i in range(count)))
-    graph = hold(ROOT.TGraph(count, xa, ya))
+    if "x_err_low" in item:
+        def column(name: str):
+            values = item.get(name) or []
+            return array.array("d", (float(values[i]) if i < len(values) else 0.0 for i in range(count)))
+
+        graph = hold(
+            ROOT.TGraphAsymmErrors(
+                count, xa, ya, column("x_err_low"), column("x_err_high"),
+                column("y_err_low"), column("y_err_high"),
+            )
+        )
+    else:
+        graph = hold(ROOT.TGraph(count, xa, ya))
     graph.SetName(next_id("g"))
     graph.SetTitle("")
     _paint_graph(graph, item)
@@ -828,6 +840,7 @@ def _paint_graph(graph, item: dict) -> None:
     graph.SetFillStyle(0)
     marker = marker_style(item.get("marker"))
     graph.SetMarkerStyle(marker if marker else 1)
+    graph.SetLineWidth(1 if "x_err_low" in item else graph.GetLineWidth())
     graph.SetMarkerSize(float(item.get("marker_size") or (1.0 if marker else 0.0)))
 
 

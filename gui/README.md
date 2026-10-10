@@ -137,6 +137,42 @@ unlabeled set.
 **File → Export plot…** writes a PNG of the current view. **Legacy ROOT** and
 **Save PDF…** send that same view to ROOT; the live plot stays in Qt.
 
+**Lines…** (or **View → X-ray lines**, Ctrl+L) opens a dockable pane on the
+X-ray line database (`Analysis_scripts/xray_lines.json`: K, L and M lines for
+Z = 4–98 from xraylib, plus a few low-energy γ lines). The **Elements**,
+**Families** and **Min %** filters at the top apply to every tab; Min % is the
+line's intensity relative to the strongest line of its element's K, L or M
+family.
+
+- **Query**: type energies (`13.6, 16.2`) or turn on **Pick on plot** and
+  click a peak. Candidates within ± tolerance are ranked by closeness ×
+  relative intensity; with **Escape / pile-up** on, Si Kα escape peaks
+  (line − 1.740 keV) and pile-up (2 × line) of strong lines are listed too.
+- **Elements**: list an element's lines (in view, or all) and add some or all
+  as markers.
+- **Auto scan**: finds peaks in the raw counts of one displayed spectrum or
+  group, or of **All displayed spectra**, then names the element families that
+  explain them. Scans of different spectra accumulate in the table, and each
+  spectrum's peaks are marked with triangles in its own color. A family such as
+  `U L` is accepted when its strongest in-range line matches a peak and enough
+  of its other lines (≥ 10 %) do too (**Coverage**). Remaining peaks are checked
+  as escape, pile-up or sum peaks of identified ones. The **σ threshold** is the
+  net peak area (counts minus the SNIP continuum) divided by √(net + 2 ×
+  background). **Noise** sets the expected peak width (FWHM² = noise² +
+  2.355²·F·w·E); raise it if found FWHMs are much wider. **Add to plot** labels
+  the selected peaks (or all identified), each belonging to its spectrum.
+  Re-labelling a spectrum replaces only that spectrum's earlier auto labels.
+  Double-click a peak to query it.
+- **Mark for** (above the tabs) picks the spectrum that markers added from
+  Query, Elements and **Add marker** belong to.
+- **Markers**: every pane marker with its spectrum and color. A marker is drawn
+  in its spectrum's color and follows it if that color changes (for example
+  when the selection order changes). **Set color…** (or double-click a Color
+  cell) gives the selected markers their own color; **Follow spectrum** undoes
+  that. Markers without a spectrum are purple (manual) or orange (auto). Edit
+  labels and energies, hide, or remove. Markers go to ROOT exports with their
+  colors and are saved in plot recipes with their spectrum and color.
+
 **X-123 + Pixel Detector Overlay** puts X-123 spectra on the left y axis and
 ADVACAM pixel-detector spectra on the right, sharing the energy axis. Pixel
 spectra are read, never produced: the list comes from `opixe-core list` and

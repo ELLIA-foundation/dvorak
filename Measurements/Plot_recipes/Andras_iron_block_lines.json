@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "kind": "x123_spectra",
+  "selection": [
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield_Ironwall.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield_rotated90.mca",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield_rotated90.mca"
+  ],
+  "y_mode": "counts",
+  "log_y": false,
+  "smooth": true,
+  "window_channels": 5,
+  "roi": {
+    "on": false,
+    "lo": 12.0,
+    "hi": 20.0
+  },
+  "cursors": {
+    "on": false,
+    "a": 15.15319024306079,
+    "b": 22.507465
+  },
+  "u_lines": false,
+  "material_lines": false,
+  "common_lines": false,
+  "line_markers": [
+    {
+      "label": "Ni K\u03b11",
+      "energy": 7.5193861510725055,
+      "source": "auto",
+      "show": true
+    },
+    {
+      "label": "Zn K\u03b11",
+      "energy": 8.648478092687807,
+      "source": "auto",
+      "show": true
+    },
+    {
+      "label": "Zn K\u03b21",
+      "energy": 9.587361845590157,
+      "source": "auto",
+      "show": true
+    },
+    {
+      "label": "Sr K\u03b11",
+      "energy": 14.103104271557822,
+      "source": "auto",
+      "show": true
+    },
+    {
+      "label": "Zr K\u03b11 + Sr K\u03b21",
+      "energy": 15.718918201179244,
+      "source": "auto",
+      "show": true
+    },
+    {
+      "label": "Zr K\u03b21",
+      "energy": 17.668101569069435,
+      "source": "auto",
+      "show": true
+    }
+  ],
+  "difference": null,
+  "view": "selection",
+  "band": "std",
+  "groups": [],
+  "legend_fields": [
+    "dead_time_pct"
+  ],
+  "legend_names": {
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield_Ironwall.mca": "Iron Block 2.2 Meters",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_2.2m_tube11_A1shield_rotated90.mca": "Rotated 90 2.2 Meters",
+    "X123_Spectra/CPX_tests_2_10_2026/Data/test_1.1m_tube11_A1shield_rotated90.mca": "Rotated 90 1.1 Meters"
+  },
+  "range": null
+}
